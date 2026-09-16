@@ -4,7 +4,17 @@ This file provides project-level context for Claude Code when working in this re
 
 ## What This Is
 
-A set of 9 Claude Code slash commands that turn Claude into a multi-agent job search system. No application code, no runtime dependencies (except one Python script for DOCX export). The repo is pure prompt architecture — markdown files that orchestrate Claude Code's Task, WebSearch, WebFetch, and file management tools into a complete job search pipeline.
+A local React + Express console built around 9 Claude Code slash-command prompts that turn an LLM into a multi-agent job search system. The original prompt architecture remains in `.claude/commands/`; the web console loads those prompts and sends them through the OpenRouter chat completions API using the model selected in Settings.
+
+## Web Application
+
+- Frontend: React + Vite in `src/`
+- Local API: Express in `server/`
+- Settings: `.data/settings.json` (Git ignored) or `OPENROUTER_API_KEY`
+- OpenRouter catalog: `GET /api/v1/models`
+- OpenRouter runs: `POST /api/v1/chat/completions`
+
+Never send an OpenRouter key to the frontend. All OpenRouter requests must continue to pass through the local server. The model used for agent runs must come from the persisted settings store rather than a UI-only default.
 
 Users clone the repo, drop in a resume, and run commands. Everything else is generated.
 

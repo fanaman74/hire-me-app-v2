@@ -1,10 +1,67 @@
-# hire-me-agents
+# Hire Me Agents Console
 
 I got laid off and built a robot army to find my next job.
 
-Multi-agent job search automation for [Claude Code](https://claude.ai/code). Nine slash commands that search job boards with parallel AI agents, score matches against your profile, generate ATS-optimized tailored resumes, prep you for interviews with mock sessions, and track your full application pipeline — including unemployment reporting data.
+This fork preserves the original nine job-search prompts and adds a local web console powered by [OpenRouter](https://openrouter.ai/). Choose any compatible text model once in Settings; setup, search planning, job analysis, resume tailoring, cover letters, interview prep, and reporting all use the saved selection.
 
-No application code. No dependencies beyond Python's `python-docx` for optional DOCX export. Just markdown files orchestrating Claude Code.
+The OpenRouter key is handled by the local Express server and saved to a Git-ignored settings file. It is never compiled into the browser bundle. Profiles and application history are stored locally; selected CV/profile content is sent to OpenRouter when an AI workflow runs.
+
+## Web Console Quick Start
+
+### Prerequisites
+
+- Node.js 20+
+- An [OpenRouter API key](https://openrouter.ai/keys)
+
+### Run locally
+
+```bash
+npm install
+npm run dev
+```
+
+Open `http://127.0.0.1:5173`, select **Settings**, add your OpenRouter key, choose a model from the live catalog, and save. You can also provide the key to the server with `OPENROUTER_API_KEY`.
+
+```bash
+OPENROUTER_API_KEY=sk-or-v1-... npm run dev
+```
+
+For a production build:
+
+```bash
+npm run build
+npm start
+```
+
+The production server listens on `http://127.0.0.1:8787` by default. Set `PORT` to override it.
+
+### Settings
+
+Settings are persisted in `.data/settings.json` and apply to every agent workflow:
+
+- OpenRouter model slug selected from the live `/api/v1/models` catalog
+- Temperature
+- Maximum output tokens
+- Default job-search sources used by Step 3
+- Optional locally stored API key
+
+Use **Test saved model** after saving to verify the selected model and key together.
+
+The **Setup profile** workflow accepts Markdown, TXT, PDF, and DOCX resumes up to 10 MB. Uploaded files are parsed by the local server and remain editable in the source-material field before the agent runs.
+
+Profiles are reusable and isolated: each stores its own CV text, target role types, custom search sites, active selection, and nine-step workflow progress in `.data/profiles.json`. Browser storage provides an immediate local cache and existing browser-only profiles are migrated to the local file automatically. Switch the active profile from the homepage before starting a workflow.
+
+For isolated development or browser testing, set `HMA_DATA_DIR` to a separate writable directory. The profile and settings stores use that directory while prompts and the built app remain rooted in the project.
+
+The ten built-in sources are shared defaults configured in **Settings → Default job-search sources**. Each profile can also have up to 20 custom domains or careers-page URLs, managed only inside **Step 3 → Find matching jobs**. Step 3 combines the saved profile and Step 2 search configuration with the default and profile-specific sources before starting the live search.
+
+Jobs discovered by Step 3 are saved to the active profile and merged by canonical posting URL, so a new search preserves pipeline stages, notes, and saved workflow artifacts. Each lead is labelled **Page fetched**, **Unavailable**, **Previously checked**, or **Unverified**. A fetched page is evidence that the URL could be read; it is not an independent claim that the vacancy is still accepting applications. Steps 4 and 5 provide a picker for those jobs, with a **Not interested** action that records a dismissal so the same listing is not re-added on the next search.
+
+The Pipeline page is backed by the saved job records and includes New, Submitted, Interviewing, Offered, Closed / Rejected, and Withdrawn stages. Track submission and pipeline stats run locally and do not require an OpenRouter request. Profile backups can be exported and restored from the Profiles page.
+
+## Original Claude Code Commands
+
+The original `.claude/commands/` files remain available for people who want the prompt-only Claude Code workflow described below.
 
 ## Why This Exists
 
@@ -55,7 +112,7 @@ You provide a markdown resume. The system bootstraps a workspace, generates sear
 - **Unemployment reporting** — Generates weekly certification form data with company address lookup. Uniquely practical.
 - **Multi-candidate support** — Isolated workspaces per person. Run searches for multiple candidates without interference.
 
-## Quick Start
+## Claude Code Quick Start
 
 ### Prerequisites
 
