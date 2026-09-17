@@ -1407,8 +1407,12 @@ function SettingsPage({ settings, setSettings }) {
       <form className="settings-layout" onSubmit={saveSettings}>
         <section className="settings-main panel">
           <div className="settings-section-heading"><div className="setting-icon"><Bot size={19} /></div><div><h2>AI provider</h2><p>Select where your requests should run. Each provider keeps its own saved key.</p></div></div>
-          <div className="provider-grid" role="radiogroup" aria-label="AI provider">
-            {PROVIDER_OPTIONS.map((option) => <button type="button" role="radio" aria-checked={form.provider === option.id} key={option.id} className={`provider-option ${form.provider === option.id ? 'selected' : ''}`} onClick={() => chooseProvider(option.id)}><span className="provider-badge">{option.label.slice(0, 2).toUpperCase()}</span><span><strong>{option.label}</strong><small>{option.id === 'openrouter' ? 'Live catalog + tools' : 'Direct API'}</small></span>{form.provider === option.id && <Check size={16} />}</button>)}
+          <div className="provider-selector">
+            <label className="field-label" htmlFor="provider-select">PROVIDER</label>
+            <select id="provider-select" className="provider-select" value={form.provider} onChange={(event) => chooseProvider(event.target.value)} aria-describedby="provider-select-help">
+              {PROVIDER_OPTIONS.map((option) => <option key={option.id} value={option.id}>{option.label}</option>)}
+            </select>
+            <small id="provider-select-help" className="field-help">Only the selected provider’s connection and model settings are shown below.</small>
           </div>
           <div className="rule" />
           <div className="settings-section-heading"><div className="setting-icon"><KeyRound size={19} /></div><div><h2>{provider.label} connection</h2><p>{provider.help}</p></div></div>
