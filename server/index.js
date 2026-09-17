@@ -209,6 +209,11 @@ function providerError(provider, model, status, detail = '') {
   return error;
 }
 
+function safeProviderDetail(data) {
+  const message = typeof data?.error?.message === 'string' ? data.error.message : typeof data?.message === 'string' ? data.message : '';
+  return message.replace(/\b(?:sk-or-v1-|sk-|AIza|key-)[a-z0-9._-]{8,}\b/gi, '[redacted]');
+}
+
 async function fetchProvider(url, { provider, model, headers = {}, body, signal, method = 'POST' } = {}) {
   if (signal?.aborted) throw new DOMException('The request was cancelled.', 'AbortError');
   for (let attempt = 0; attempt < 2; attempt += 1) {
@@ -224,7 +229,7 @@ async function fetchProvider(url, { provider, model, headers = {}, body, signal,
         const retryable = [408, 425, 429, 500, 502, 503, 504].includes(status);
         if (attempt === 0 && retryable) { await new Promise((resolve) => setTimeout(resolve, 250)); continue; }
         // Do not expose a provider response body: it may echo request content or secrets.
-        throw providerError(provider, model, status);
+        throw providerError(provider, model, status, safeProviderDetail(data));
       }
       return data;
     } catch (error) {

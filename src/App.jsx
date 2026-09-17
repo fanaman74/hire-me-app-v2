@@ -1464,8 +1464,8 @@ function SettingsPage({ settings, setSettings }) {
           <div className="settings-section-heading"><div className="setting-icon"><KeyRound size={19} /></div><div><h2>{provider.label} connection</h2><p>{provider.help}</p></div></div>
           <div className="field-group">
             <label className="field-label" htmlFor="api-key">{provider.label.toUpperCase()} API KEY</label>
-            <div className="key-input"><input id="api-key" type="password" value={form.apiKey} onChange={(event) => setForm({ ...form, apiKey: event.target.value })} placeholder={keyStatus.configured ? 'Key saved — enter a new key to replace it' : provider.placeholder} autoComplete="off" /><span className={keyStatus.configured ? 'configured' : ''}>{keyStatus.configured ? 'SAVED' : 'NOT SET'}</span></div>
-            <small className="field-help">You can also set <code>{provider.env}</code> in the server environment. Saved keys are masked and never returned.</small>
+            <div className="key-input"><input id="api-key" type="password" value={form.apiKey} onChange={(event) => setForm({ ...form, apiKey: event.target.value })} placeholder={keyStatus.configured ? 'Key saved — enter a new key to replace it' : provider.placeholder} autoComplete="off" /><span className={keyStatus.configured ? 'configured' : ''}>{keyStatus.configured ? keyStatus.source === 'environment' ? 'ENVIRONMENT' : 'SAVED' : 'NOT SET'}</span></div>
+            <small className="field-help">{keyStatus.source === 'environment' ? <><code>{provider.env}</code> is active and overrides any saved account key. Update that Railway variable to change the key.</> : <>You can also set <code>{provider.env}</code> in the server environment. Saved keys are masked and never returned.</>}</small>
           </div>
 
           <div className="rule" />
