@@ -22,8 +22,20 @@ function validEmail(email) {
   return email.length <= 254 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 }
 
+function configuredAdminEmails() {
+  return new Set(String(process.env.ADMIN_EMAILS || '')
+    .split(/[\s,;]+/)
+    .map(normalizeEmail)
+    .filter(Boolean));
+}
+
+function isAdminEmail(email) {
+  return configuredAdminEmails().has(normalizeEmail(email));
+}
+
 function publicUser(user) {
-  return { id: user.id, email: user.email, createdAt: user.createdAt, provider: user.provider || 'local' };
+  const isAdmin = isAdminEmail(user.email);
+  return { id: user.id, email: user.email, createdAt: user.createdAt, provider: user.provider || 'local', role: isAdmin ? 'admin' : 'user', isAdmin };
 }
 
 function hashToken(token) {
@@ -239,4 +251,4 @@ export function createAuthStore(rootDir) {
   };
 }
 
-export { PASSWORD_MIN_LENGTH, SESSION_COOKIE, normalizeEmail, validEmail };
+export { PASSWORD_MIN_LENGTH, SESSION_COOKIE, configuredAdminEmails, isAdminEmail, normalizeEmail, validEmail };

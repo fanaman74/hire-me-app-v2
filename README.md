@@ -47,6 +47,8 @@ https://your-public-domain.example/api/auth/google/callback
 
 Set `APP_ORIGIN=https://your-public-domain.example` for a stable public origin. You may set `GOOGLE_REDIRECT_URI` explicitly when the registered callback URL differs from the public origin. Never commit these secrets or expose the client secret to the browser.
 
+To designate administrators, set a comma- or space-separated `ADMIN_EMAILS` variable, for example `ADMIN_EMAILS=fredanaman@gmail.com`. The signed-in account receives the `admin` role when its email matches this list.
+
 For a production build:
 
 ```bash

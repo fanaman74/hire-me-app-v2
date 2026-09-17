@@ -538,7 +538,7 @@ function WorkspaceApp({ user, onLogout, notice = '' }) {
           <div className="status-led" />
           <div>
             <span className="status-title">SIGNED IN</span>
-            <span className="status-copy">{user.email}</span>
+            <span className="status-copy">{user.isAdmin ? 'ADMIN · ' : ''}{user.email}</span>
           </div>
         </div>
         <div className="sidebar-model">

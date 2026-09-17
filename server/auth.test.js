@@ -7,6 +7,7 @@ import test from 'node:test';
 process.env.NODE_ENV = 'test';
 delete process.env.GOOGLE_CLIENT_ID;
 delete process.env.GOOGLE_CLIENT_SECRET;
+process.env.ADMIN_EMAILS = 'first@example.com';
 process.env.HMA_DATA_DIR = await fs.mkdtemp(path.join(os.tmpdir(), 'hire-me-agents-auth-'));
 const { app } = await import('./index.js');
 
@@ -26,6 +27,8 @@ test('local accounts receive isolated sessions and scoped data', async () => {
 
     const first = await jsonRequest(baseUrl, '/api/auth/register', { method: 'POST', body: JSON.stringify({ email: 'first@example.com', password: 'first-password' }) });
     assert.equal(first.response.status, 201);
+    assert.equal(first.body.user.role, 'admin');
+    assert.equal(first.body.user.isAdmin, true);
     const firstCookie = first.response.headers.get('set-cookie').split(';')[0];
     const me = await jsonRequest(baseUrl, '/api/auth/me', { headers: { cookie: firstCookie } });
     assert.equal(me.response.status, 200);
@@ -40,6 +43,7 @@ test('local accounts receive isolated sessions and scoped data', async () => {
 
     const second = await jsonRequest(baseUrl, '/api/auth/register', { method: 'POST', body: JSON.stringify({ email: 'second@example.com', password: 'second-password' }) });
     assert.equal(second.response.status, 201);
+    assert.equal(second.body.user.role, 'user');
     const secondCookie = second.response.headers.get('set-cookie').split(';')[0];
     const secondProfiles = await jsonRequest(baseUrl, '/api/profiles', { headers: { cookie: secondCookie } });
     assert.deepEqual(secondProfiles.body, { candidates: [], activeCandidateId: '' });
