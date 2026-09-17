@@ -10,7 +10,7 @@ import http from 'node:http';
 import https from 'node:https';
 import pdfParse from 'pdf-parse/lib/pdf-parse.js';
 import { fileURLToPath } from 'node:url';
-import { createSettingsStore } from './settings.js';
+import { createSettingsStore, PROVIDERS, modelsForProvider, normalizeProvider } from './settings.js';
 import { createProfileStore } from './profiles.js';
 import { createAuthStore } from './auth.js';
 import { SEARCH_SOURCES, SEARCH_SOURCE_IDS } from '../shared/search-sources.js';
@@ -201,39 +201,37 @@ async function mapWithConcurrency(items, limit, worker, signal) {
   return results;
 }
 
-async function openRouterRequest(pathname, options = {}) {
-  if (options.signal?.aborted) throw new DOMException('The request was cancelled.', 'AbortError');
-  const { userId = '', ...requestOptions } = options;
-  const settings = await store.get({ includeSecret: true, userId });
-  const headers = {
-    'Content-Type': 'application/json',
-    'HTTP-Referer': 'http://localhost:5173',
-    'X-Title': 'Hire Me Agents',
-    ...(options.headers || {}),
-  };
-  if (settings.apiKey) headers.Authorization = `Bearer ${settings.apiKey}`;
-  const signal = options.signal;
+function providerError(provider, model, status, detail = '') {
+  const error = new Error(`${PROVIDERS[provider]?.label || provider} request failed for ${model || 'the selected model'}${detail ? `: ${detail.slice(0, 240)}` : ''}`);
+  error.status = status || 502;
+  error.provider = provider;
+  return error;
+}
+
+async function fetchProvider(url, { provider, model, headers = {}, body, signal, method = 'POST' } = {}) {
+  if (signal?.aborted) throw new DOMException('The request was cancelled.', 'AbortError');
   for (let attempt = 0; attempt < 2; attempt += 1) {
-    if (signal?.aborted) throw new DOMException('The request was cancelled.', 'AbortError');
     const timeoutController = new AbortController();
     const timeout = setTimeout(() => timeoutController.abort(), OPENROUTER_TIMEOUT_MS);
     const abortFromCaller = () => timeoutController.abort();
     signal?.addEventListener('abort', abortFromCaller, { once: true });
     try {
-      const response = await fetch(`https://openrouter.ai/api/v1${pathname}`, { ...requestOptions, signal: timeoutController.signal, headers });
+      const response = await fetch(url, { method, body, signal: timeoutController.signal, headers });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
-        const error = new Error(data?.error?.message || `OpenRouter returned ${response.status}`);
-        error.status = response.status;
-        error.error = data.error;
-        if (attempt === 0 && [408, 425, 429, 500, 502, 503, 504].includes(response.status)) { await new Promise((resolve) => setTimeout(resolve, 250)); continue; }
-        throw error;
+        const status = response.status;
+        const retryable = [408, 425, 429, 500, 502, 503, 504].includes(status);
+        if (attempt === 0 && retryable) { await new Promise((resolve) => setTimeout(resolve, 250)); continue; }
+        // Do not expose a provider response body: it may echo request content or secrets.
+        throw providerError(provider, model, status);
       }
       return data;
     } catch (error) {
+      if (error?.provider === provider) throw error;
       const retryable = error instanceof TypeError || [408, 425, 429, 500, 502, 503, 504].includes(error.status);
       if (attempt === 0 && retryable && !signal?.aborted) { await new Promise((resolve) => setTimeout(resolve, 250)); continue; }
-      throw error;
+      if (error.name === 'AbortError') throw error;
+      throw providerError(provider, model, error.status, error.message);
     } finally {
       clearTimeout(timeout);
       signal?.removeEventListener('abort', abortFromCaller);
@@ -241,6 +239,68 @@ async function openRouterRequest(pathname, options = {}) {
   }
 }
 
+function normalizeDirectResponse(provider, model, data) {
+  if (provider === 'claude') {
+    const content = (data.content || []).filter((part) => part?.type === 'text').map((part) => part.text).join('');
+    return { id: data.id, model: data.model || model, choices: [{ message: { role: 'assistant', content }, finish_reason: data.stop_reason || null }], usage: data.usage ? { prompt_tokens: data.usage.input_tokens, completion_tokens: data.usage.output_tokens, total_tokens: Number(data.usage.input_tokens || 0) + Number(data.usage.output_tokens || 0) } : null };
+  }
+  if (provider === 'gemini') {
+    const content = (data.candidates?.[0]?.content?.parts || []).map((part) => part.text || '').join('');
+    const usage = data.usageMetadata;
+    return { model, choices: [{ message: { role: 'assistant', content }, finish_reason: data.candidates?.[0]?.finishReason || null }], usage: usage ? { prompt_tokens: usage.promptTokenCount, completion_tokens: usage.candidatesTokenCount, total_tokens: usage.totalTokenCount } : null };
+  }
+  return data;
+}
+
+async function providerRequest(pathname, options = {}) {
+  if (options.signal?.aborted) throw new DOMException('The request was cancelled.', 'AbortError');
+  const { userId = '', ...requestOptions } = options;
+  const settings = await store.get({ includeSecret: true, userId });
+  const provider = settings.provider;
+  const model = settings.model;
+  const key = settings.apiKey;
+  if (!key) {
+    const error = new Error(`Add a ${PROVIDERS[provider]?.label || provider} API key in Settings first.`);
+    error.status = 400;
+    error.provider = provider;
+    throw error;
+  }
+  const headers = { 'Content-Type': 'application/json', ...(requestOptions.headers || {}) };
+  const bodyData = typeof requestOptions.body === 'string' ? JSON.parse(requestOptions.body) : requestOptions.body;
+  if (provider === 'openrouter') {
+    headers.Authorization = `Bearer ${key}`;
+    headers['HTTP-Referer'] = process.env.APP_ORIGIN || 'http://localhost:5173';
+    headers['X-Title'] = 'Hire Me Agents';
+    const data = await fetchProvider(`https://openrouter.ai/api/v1${pathname}`, { provider, model, ...requestOptions, headers, body: typeof requestOptions.body === 'string' ? requestOptions.body : requestOptions.body ? JSON.stringify(requestOptions.body) : undefined });
+    return data;
+  }
+  if (pathname !== '/chat/completions') throw providerError(provider, model, 400, 'This provider does not expose a model catalog through this endpoint.');
+  const messages = Array.isArray(bodyData?.messages) ? bodyData.messages : [];
+  const safeBody = { ...bodyData };
+  delete safeBody.tools;
+  if (provider === 'claude') {
+    const system = messages.filter((message) => message.role === 'system').map((message) => String(message.content || '')).join('\n\n');
+    const converted = messages.filter((message) => message.role !== 'system').map((message) => ({ role: message.role === 'assistant' ? 'assistant' : 'user', content: String(message.content || '') }));
+    const payload = { model, max_tokens: safeBody.max_tokens || settings.maxTokens, temperature: safeBody.temperature ?? settings.temperature, messages: converted };
+    if (system) payload.system = system;
+    const data = await fetchProvider('https://api.anthropic.com/v1/messages', { provider, model, ...requestOptions, headers: { ...headers, 'x-api-key': key, 'anthropic-version': '2023-06-01' }, body: JSON.stringify(payload) });
+    return normalizeDirectResponse(provider, model, data);
+  }
+  if (provider === 'gemini') {
+    const contents = messages.filter((message) => message.role !== 'system').map((message) => ({ role: message.role === 'assistant' ? 'model' : 'user', parts: [{ text: String(message.content || '') }] }));
+    const system = messages.filter((message) => message.role === 'system').map((message) => String(message.content || '')).join('\n\n');
+    const payload = { contents, generationConfig: { temperature: safeBody.temperature ?? settings.temperature, maxOutputTokens: safeBody.max_tokens || settings.maxTokens } };
+    if (system) payload.systemInstruction = { parts: [{ text: system }] };
+    const data = await fetchProvider(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, { provider, model, ...requestOptions, headers: { ...headers, 'x-goog-api-key': key }, body: JSON.stringify(payload) });
+    return normalizeDirectResponse(provider, model, data);
+  }
+  const base = provider === 'kimi' ? (process.env.KIMI_API_BASE_URL || 'https://api.moonshot.ai/v1') : 'https://api.openai.com/v1';
+  headers.Authorization = `Bearer ${key}`;
+  return fetchProvider(`${base}${pathname}`, { provider, model, ...requestOptions, headers, body: JSON.stringify(safeBody) });
+}
+
+// Kept as a compatibility alias for workflow call sites and older integrations.
+const openRouterRequest = providerRequest;
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
 
 function authError(error, fallback = 'Authentication failed') {
@@ -397,58 +457,57 @@ app.get('/api/settings', async (req, res) => {
 });
 
 app.put('/api/settings', async (req, res) => {
+  const provider = normalizeProvider(req.body.provider);
   const model = String(req.body.model || '').trim();
   const temperature = Number(req.body.temperature);
   const maxTokens = Number(req.body.maxTokens);
   const searchSources = Array.isArray(req.body.searchSources) ? [...new Set(req.body.searchSources.map(String))] : [];
-  if (!/^[a-z0-9._-]+\/[a-z0-9._:@/-]+$/i.test(model)) {
-    return res.status(400).json({ error: { message: 'Choose a valid OpenRouter model slug.' } });
+  const validDirectModel = modelsForProvider(provider).some((entry) => entry.id === model);
+  if (provider === 'openrouter' ? !/^[a-z0-9._-]+\/[a-z0-9._:@/-]+$/i.test(model) : !validDirectModel) {
+    return res.status(400).json({ error: { message: `Choose a valid ${PROVIDERS[provider].label} model.` } });
   }
-  if (!Number.isFinite(temperature) || temperature < 0 || temperature > 2) {
-    return res.status(400).json({ error: { message: 'Temperature must be between 0 and 2.' } });
-  }
-  if (!Number.isInteger(maxTokens) || maxTokens < 128 || maxTokens > 32768) {
-    return res.status(400).json({ error: { message: 'Max output tokens must be between 128 and 32768.' } });
-  }
-  if (!searchSources.length || searchSources.some((source) => !SEARCH_SOURCE_IDS.has(source))) {
-    return res.status(400).json({ error: { message: 'Select at least one valid built-in search source.' } });
-  }
+  if (!Number.isFinite(temperature) || temperature < 0 || temperature > 2) return res.status(400).json({ error: { message: 'Temperature must be between 0 and 2.' } });
+  if (!Number.isInteger(maxTokens) || maxTokens < 128 || maxTokens > 32768) return res.status(400).json({ error: { message: 'Max output tokens must be between 128 and 32768.' } });
+  if (!searchSources.length || searchSources.some((source) => !SEARCH_SOURCE_IDS.has(source))) return res.status(400).json({ error: { message: 'Select at least one valid built-in search source.' } });
   try {
-    res.json(await store.update({
-      model,
-      temperature,
-      maxTokens,
-      searchSources,
-      apiKey: req.body.apiKey,
-      clearApiKey: req.body.clearApiKey,
-    }, { userId: req.user.id }));
+    res.json(await store.update({ provider, model, temperature, maxTokens, searchSources, apiKey: req.body.apiKey, clearApiKey: req.body.clearApiKey }, { userId: req.user.id }));
   } catch (error) {
     const result = apiError(error, 'Could not save settings');
     res.status(result.status).json(result.body);
   }
 });
-
 app.get('/api/models', async (req, res) => {
   try {
-    const payload = await openRouterRequest('/models?output_modalities=text&sort=most-popular', { userId: req.user.id });
+    const settings = await store.get({ userId: req.user.id, includeSecret: true });
+    const provider = normalizeProvider(req.query.provider || settings.provider);
+    if (provider !== 'openrouter') return res.json({ provider, models: modelsForProvider(provider) });
+    // The model picker can request OpenRouter while another provider is still
+    // selected in the unsaved form, so use the OpenRouter key explicitly here.
+    const key = settings.providerKeys?.openrouter || '';
+    if (!key) {
+      const error = new Error('Add an OpenRouter API key in Settings to load its live model catalog.');
+      error.status = 400;
+      throw error;
+    }
+    const payload = await fetchProvider('https://openrouter.ai/api/v1/models?output_modalities=text&sort=most-popular', {
+      provider: 'openrouter',
+      model: 'model catalog',
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${key}`,
+        'HTTP-Referer': process.env.APP_ORIGIN || 'http://localhost:5173',
+        'X-Title': 'Hire Me Agents',
+      },
+    });
     const models = (payload.data || [])
       .filter((model) => model?.id && model?.architecture?.output_modalities?.includes('text'))
-      .map((model) => ({
-        id: model.id,
-        name: model.name || model.id,
-        description: model.description || '',
-        contextLength: model.context_length || 0,
-        promptPrice: Number(model.pricing?.prompt || 0),
-        completionPrice: Number(model.pricing?.completion || 0),
-        supportsTools: model.supported_parameters?.includes('tools') || false,
-      }));
-    res.json({ models });
+      .map((model) => ({ id: model.id, name: model.name || model.id, description: model.description || '', contextLength: model.context_length || 0, promptPrice: Number(model.pricing?.prompt || 0), completionPrice: Number(model.pricing?.completion || 0), supportsTools: model.supported_parameters?.includes('tools') || false }));
+    res.json({ provider, models });
   } catch (error) {
-    const result = apiError(error, 'Could not load the OpenRouter model catalog');
+    const result = apiError(error, 'Could not load the model catalog');
     res.status(result.status).json(result.body);
   }
 });
-
 app.post('/api/extract-resume', upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: { message: 'Choose a resume file to upload.' } });
 
@@ -490,7 +549,7 @@ app.post('/api/extract-resume', upload.single('file'), async (req, res) => {
 app.post('/api/test-model', async (req, res) => {
   try {
     const settings = await store.get({ includeSecret: true, userId: req.user.id });
-    if (!settings.apiKey) return res.status(400).json({ error: { message: 'Add an OpenRouter API key first.' } });
+    if (!settings.apiKey) return res.status(400).json({ error: { message: `Add a ${PROVIDERS[settings.provider]?.label || settings.provider} API key first.` } });
     const payload = await openRouterRequest('/chat/completions', {
       method: 'POST',
       body: JSON.stringify({
@@ -514,7 +573,7 @@ app.post('/api/infer-salary', async (req, res) => {
   if (!resumeText && !searchConfig) return res.status(400).json({ error: { message: 'Add a CV or complete the search configuration first.' } });
   try {
     const settings = await store.get({ includeSecret: true, userId: req.user.id });
-    if (!settings.apiKey) return res.status(400).json({ error: { message: 'Add an OpenRouter API key in Settings first.' } });
+    if (!settings.apiKey) return res.status(400).json({ error: { message: `Add a ${PROVIDERS[settings.provider]?.label || settings.provider} API key in Settings first.` } });
     const payload = await openRouterRequest('/chat/completions', {
       method: 'POST',
       body: JSON.stringify({
@@ -563,7 +622,10 @@ app.post('/api/run-command', async (req, res) => {
   res.on('close', () => { if (!res.writableEnded) abortRequest(); });
   try {
     const settings = await store.get({ includeSecret: true, userId: req.user.id });
-    if (!settings.apiKey) return res.status(400).json({ error: { message: 'Add an OpenRouter API key in Settings first.' } });
+    if (!settings.apiKey) return res.status(400).json({ error: { message: `Add a ${PROVIDERS[settings.provider]?.label || settings.provider} API key in Settings first.` } });
+    if (command === 'find-me-a-job' && settings.provider !== 'openrouter') {
+      return res.status(400).json({ error: { message: 'Job search needs OpenRouter because its web-search and page-fetch tools are required. Choose OpenRouter in Settings, or use a direct provider for the other workflows.' } });
+    }
     const commandPrompt = await fs.readFile(path.join(rootDir, '.claude', 'commands', `${command}.md`), 'utf8');
     let prompt = commandPrompt;
     const configuredSources = SEARCH_SOURCES.filter((source) => settings.searchSources.includes(source.id));
@@ -722,7 +784,7 @@ app.post('/api/summarize-job', async (req, res) => {
   if (!/^https?:\/\//i.test(url)) return res.status(400).json({ error: { message: 'A valid job posting URL is required.' } });
   try {
     const settings = await store.get({ includeSecret: true, userId: req.user.id });
-    if (!settings.apiKey) return res.status(400).json({ error: { message: 'Add an OpenRouter API key in Settings first.' } });
+    if (!settings.apiKey) return res.status(400).json({ error: { message: `Add a ${PROVIDERS[settings.provider]?.label || settings.provider} API key in Settings first.` } });
     const page = await fetchCustomSite(url);
     if (!page.ok || !page.text) throw new Error(`Could not read the job posting (HTTP ${page.status || 'unreachable'}).`);
     const payload = await openRouterRequest('/chat/completions', {

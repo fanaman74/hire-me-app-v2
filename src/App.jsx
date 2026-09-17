@@ -333,7 +333,7 @@ function workflowOutputText(value) {
 function WorkspaceApp({ user, onLogout, notice = '' }) {
   const [page, setPage] = useState('overview');
   const [mobileNav, setMobileNav] = useState(false);
-  const [settings, setSettings] = useState({ model: DEFAULT_MODEL, temperature: 0.3, maxTokens: 4096, searchSources: DEFAULT_SEARCH_SOURCES, apiKeyConfigured: false });
+  const [settings, setSettings] = useState({ provider: 'openrouter', model: DEFAULT_MODEL, temperature: 0.3, maxTokens: 4096, searchSources: DEFAULT_SEARCH_SOURCES, providerKeys: {}, apiKeyConfigured: false });
   const [settingsLoading, setSettingsLoading] = useState(true);
   const [profileStorageError, setProfileStorageError] = useState('');
   const storageScope = user.id;
@@ -542,10 +542,10 @@ function WorkspaceApp({ user, onLogout, notice = '' }) {
           </div>
         </div>
         <div className="sidebar-model">
-          <span className="nav-caption">ACTIVE MODEL</span>
+          <span className="nav-caption">ACTIVE PROVIDER / MODEL</span>
           <button onClick={() => navigate('settings')}>
             <span className="model-pulse" />
-            <span title={settings.model}>{settingsLoading ? 'LOADING…' : settings.model}</span>
+            <span title={settings.model}>{settingsLoading ? 'LOADING…' : `${settings.provider || 'AI'} · ${settings.model}`}</span>
             <ArrowRight size={14} />
           </button>
         </div>
@@ -561,7 +561,7 @@ function WorkspaceApp({ user, onLogout, notice = '' }) {
           <div className="topbar-actions">
             <button className="model-chip" onClick={() => navigate('settings')}>
               <span className="model-pulse" />
-              <span>{settings.model}</span>
+              <span>{settings.provider || 'AI'} · {settings.model}</span>
               <ChevronDown size={14} />
             </button>
             <button className="icon-button" aria-label="Help"><CircleHelp size={18} /></button>
@@ -713,7 +713,7 @@ function Overview({ onNavigate, settings, candidates, activeCandidate, onSelectC
       <section className="signal-strip">
         <div><Activity size={16} /><span>SYSTEM</span><strong>READY</strong></div>
         <div><Bot size={16} /><span>MODEL</span><strong>{settings.model}</strong></div>
-        <div><ShieldCheck size={16} /><span>API KEY</span><strong>{settings.apiKeyConfigured ? 'CONFIGURED' : 'REQUIRED'}</strong></div>
+        <div><ShieldCheck size={16} /><span>PROVIDER KEY</span><strong>{settings.apiKeyConfigured ? 'CONFIGURED' : 'REQUIRED'}</strong></div>
       </section>
 
       <section className="metric-grid">
@@ -746,7 +746,7 @@ function Overview({ onNavigate, settings, candidates, activeCandidate, onSelectC
 
         <div className="panel readiness-panel">
           <div className="panel-heading"><div><span className="eyebrow">READINESS</span><h2>Before your first run</h2></div></div>
-          <ReadinessItem complete={settings.apiKeyConfigured} number="1" title={settings.apiKeyConfigured ? 'OpenRouter configured' : 'Add your OpenRouter key'} copy={settings.apiKeyConfigured ? 'The selected model is ready to run.' : 'Required to run any agent.'} action={() => onNavigate('settings')} />
+          <ReadinessItem complete={settings.apiKeyConfigured} number="1" title={settings.apiKeyConfigured ? `${settings.provider || 'AI provider'} configured` : 'Add an AI provider key'} copy={settings.apiKeyConfigured ? 'The selected model is ready to run.' : 'Required to run any agent.'} action={() => onNavigate('settings')} />
           <ReadinessItem complete={Boolean(activeCandidate)} number="2" title={activeCandidate ? `Profile: ${activeCandidate.name}` : 'Create a profile'} copy={activeCandidate ? activeCandidate.targetRoles.join(' · ') : 'Add a resume and target roles.'} action={() => onNavigate('candidates')} />
           <ReadinessItem complete={completedSteps.includes('build-search-config')} number="3" title={completedSteps.includes('build-search-config') ? 'Search config completed' : 'Review search settings'} copy="Confirm location, salary, sources, and filters." action={() => onNavigate('workflows')} />
           <div className="readiness-note"><Zap size={16} /><p>Once configured, every workflow uses <strong>{settings.model}</strong> until you change it.</p></div>
@@ -1028,7 +1028,7 @@ function WorkflowStudio({ settings, activeCandidate, onWorkflowComplete, onUpdat
 
   return (
     <>
-      <PageIntro eyebrow="AGENT WORKFLOWS" title={<>One job.<br /><span>One focused agent.</span></>} copy="Choose a workflow, provide the source material, and run it with your selected OpenRouter model." />
+      <PageIntro eyebrow="AGENT WORKFLOWS" title={<>One job.<br /><span>One focused agent.</span></>} copy="Choose a workflow, provide the source material, and run it with your selected provider and model." />
       <section className={`workflow-candidate-bar ${activeCandidate ? 'active' : ''}`}>
         {activeCandidate ? <><span className="candidate-initials">{activeCandidate.name.split(/\s+/).map((part) => part[0]).join('').slice(0, 2).toUpperCase()}</span><span><small>ACTIVE PROFILE</small><strong>{activeCandidate.name}</strong><em>{activeCandidate.targetRoles.join(' · ')}</em></span><span className="workflow-progress-count">{(activeCandidate.completedSteps || []).length}/{WORKFLOWS.length} STEPS</span></> : <><Users size={18} /><span><small>NO ACTIVE PROFILE</small><strong>Runs will not have a saved CV or progress</strong></span></>}
         <button type="button" onClick={onOpenCandidates}>{activeCandidate ? 'Switch profile' : 'Choose profile'} <ArrowRight size={14} /></button>
@@ -1309,27 +1309,49 @@ function EmptyState({ icon: Icon, title, copy, action, onAction }) {
   return <section className="empty panel"><div className="empty-icon"><Icon size={27} /></div><h2>{title}</h2><p>{copy}</p><button className="button primary" onClick={onAction}>{action}<ArrowRight size={15} /></button></section>;
 }
 
+const PROVIDER_OPTIONS = [
+  { id: 'openrouter', label: 'OpenRouter', help: 'Live model catalog, pricing, and web tools.', env: 'OPENROUTER_API_KEY', placeholder: 'sk-or-v1-…', defaultModel: 'openai/gpt-4.1-mini' },
+  { id: 'claude', label: 'Claude', help: 'Direct Anthropic API access. Web tools are OpenRouter-only.', env: 'ANTHROPIC_API_KEY', placeholder: 'sk-ant-…', defaultModel: 'claude-sonnet-4-5-20250929' },
+  { id: 'openai', label: 'ChatGPT', help: 'Direct OpenAI API access. Web tools are OpenRouter-only.', env: 'OPENAI_API_KEY', placeholder: 'sk-…', defaultModel: 'gpt-4.1-mini' },
+  { id: 'kimi', label: 'Kimi', help: 'Direct Moonshot/Kimi API access. Web tools are OpenRouter-only.', env: 'MOONSHOT_API_KEY', placeholder: 'Kimi API key', defaultModel: 'kimi-k3' },
+  { id: 'gemini', label: 'Gemini', help: 'Direct Google AI API access. Web tools are OpenRouter-only.', env: 'GEMINI_API_KEY', placeholder: 'AIza…', defaultModel: 'gemini-2.5-flash' },
+];
+
 function SettingsPage({ settings, setSettings }) {
   const [models, setModels] = useState([]);
   const [modelsLoading, setModelsLoading] = useState(true);
   const [modelsError, setModelsError] = useState('');
   const [query, setQuery] = useState('');
   const [modelOpen, setModelOpen] = useState(false);
-  const [form, setForm] = useState({ ...settings, apiKey: '' });
+  const [form, setForm] = useState({ ...settings, provider: settings.provider || 'openrouter', apiKey: '' });
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testStatus, setTestStatus] = useState(null);
   const [error, setError] = useState('');
+  const provider = PROVIDER_OPTIONS.find((entry) => entry.id === form.provider) || PROVIDER_OPTIONS[0];
+  const keyStatus = settings.providerKeys?.[provider.id] || { configured: settings.apiKeyConfigured, source: settings.apiKeySource };
 
-  useEffect(() => setForm((current) => ({ ...current, ...settings })), [settings]);
+  useEffect(() => setForm((current) => ({ ...current, ...settings, provider: settings.provider || 'openrouter', apiKey: '' })), [settings]);
 
   useEffect(() => {
-    api('/api/models')
-      .then(({ models: list }) => setModels(list))
-      .catch((err) => setModelsError(err.message))
-      .finally(() => setModelsLoading(false));
-  }, []);
+    let active = true;
+    setModelsLoading(true);
+    setModelsError('');
+    setModels([]);
+    api(`/api/models?provider=${encodeURIComponent(provider.id)}`)
+      .then(({ models: list }) => { if (active) setModels(list); })
+      .catch((err) => { if (active) setModelsError(err.message); })
+      .finally(() => { if (active) setModelsLoading(false); });
+    return () => { active = false; };
+  }, [provider.id, keyStatus.configured]);
+
+  function chooseProvider(id) {
+    const option = PROVIDER_OPTIONS.find((entry) => entry.id === id) || PROVIDER_OPTIONS[0];
+    setForm((current) => ({ ...current, provider: option.id, model: option.defaultModel, apiKey: '' }));
+    setQuery(''); setModelOpen(false);
+    setTestStatus(null); setSaved(false);
+  }
 
   const selectedModel = models.find((model) => model.id === form.model);
   const filteredModels = useMemo(() => {
@@ -1344,7 +1366,7 @@ function SettingsPage({ settings, setSettings }) {
       const next = await api('/api/settings', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: form.model, temperature: Number(form.temperature), maxTokens: Number(form.maxTokens), searchSources: form.searchSources || DEFAULT_SEARCH_SOURCES, apiKey: form.apiKey }),
+        body: JSON.stringify({ provider: form.provider, model: form.model, temperature: Number(form.temperature), maxTokens: Number(form.maxTokens), searchSources: form.searchSources || DEFAULT_SEARCH_SOURCES, apiKey: form.apiKey }),
       });
       setSettings(next);
       setForm((current) => ({ ...current, ...next, apiKey: '' }));
@@ -1381,18 +1403,23 @@ function SettingsPage({ settings, setSettings }) {
 
   return (
     <>
-      <PageIntro eyebrow="SETTINGS" title={<>Choose the engine.<br /><span>Keep the workflow.</span></>} copy="Your selected model is saved on the local server and used by every agent workflow." />
+      <PageIntro eyebrow="SETTINGS" title={<>Choose the engine.<br /><span>Keep the workflow.</span></>} copy="Choose the AI provider and model used by every agent workflow. Keys stay on the server and are never added to the browser bundle." />
       <form className="settings-layout" onSubmit={saveSettings}>
         <section className="settings-main panel">
-          <div className="settings-section-heading"><div className="setting-icon"><KeyRound size={19} /></div><div><h2>OpenRouter connection</h2><p>Requests are sent through your local server. The key is never added to the browser bundle.</p></div></div>
+          <div className="settings-section-heading"><div className="setting-icon"><Bot size={19} /></div><div><h2>AI provider</h2><p>Select where your requests should run. Each provider keeps its own saved key.</p></div></div>
+          <div className="provider-grid" role="radiogroup" aria-label="AI provider">
+            {PROVIDER_OPTIONS.map((option) => <button type="button" role="radio" aria-checked={form.provider === option.id} key={option.id} className={`provider-option ${form.provider === option.id ? 'selected' : ''}`} onClick={() => chooseProvider(option.id)}><span className="provider-badge">{option.label.slice(0, 2).toUpperCase()}</span><span><strong>{option.label}</strong><small>{option.id === 'openrouter' ? 'Live catalog + tools' : 'Direct API'}</small></span>{form.provider === option.id && <Check size={16} />}</button>)}
+          </div>
+          <div className="rule" />
+          <div className="settings-section-heading"><div className="setting-icon"><KeyRound size={19} /></div><div><h2>{provider.label} connection</h2><p>{provider.help}</p></div></div>
           <div className="field-group">
-            <label className="field-label" htmlFor="api-key">API KEY</label>
-            <div className="key-input"><input id="api-key" type="password" value={form.apiKey} onChange={(event) => setForm({ ...form, apiKey: event.target.value })} placeholder={settings.apiKeyConfigured ? 'Key saved — enter a new key to replace it' : 'sk-or-v1-…'} autoComplete="off" /><span className={settings.apiKeyConfigured ? 'configured' : ''}>{settings.apiKeyConfigured ? 'SAVED' : 'NOT SET'}</span></div>
-            <small className="field-help">You can also set <code>OPENROUTER_API_KEY</code> in the server environment.</small>
+            <label className="field-label" htmlFor="api-key">{provider.label.toUpperCase()} API KEY</label>
+            <div className="key-input"><input id="api-key" type="password" value={form.apiKey} onChange={(event) => setForm({ ...form, apiKey: event.target.value })} placeholder={keyStatus.configured ? 'Key saved — enter a new key to replace it' : provider.placeholder} autoComplete="off" /><span className={keyStatus.configured ? 'configured' : ''}>{keyStatus.configured ? 'SAVED' : 'NOT SET'}</span></div>
+            <small className="field-help">You can also set <code>{provider.env}</code> in the server environment. Saved keys are masked and never returned.</small>
           </div>
 
           <div className="rule" />
-          <div className="settings-section-heading"><div className="setting-icon"><Bot size={19} /></div><div><h2>Agent model</h2><p>All nine workflows use this model. Pricing below is per million tokens from OpenRouter.</p></div></div>
+          <div className="settings-section-heading"><div className="setting-icon"><Sparkles size={19} /></div><div><h2>Agent model</h2><p>{provider.id === 'openrouter' ? 'Choose from OpenRouter’s live text model catalog. Pricing and tool support are shown below.' : `Choose a default ${provider.label} model. The catalog is maintained by the server.`}</p></div></div>
           <div className="field-group model-field">
             <label className="field-label">MODEL</label>
             <button type="button" className={`model-select ${modelOpen ? 'open' : ''}`} onClick={() => setModelOpen(!modelOpen)}>
@@ -1407,7 +1434,7 @@ function SettingsPage({ settings, setSettings }) {
                   {modelsLoading && <div className="menu-state"><RefreshCw className="spin" size={16} /> Loading catalog…</div>}
                   {modelsError && <div className="menu-state error-text">{modelsError}</div>}
                   {!modelsLoading && !filteredModels.length && <div className="menu-state">No matching models</div>}
-                  {filteredModels.map((model) => <button type="button" key={model.id} onClick={() => chooseModel(model)} className={model.id === form.model ? 'selected' : ''}><span className="provider-badge">{model.id.split('/')[0].slice(0, 2).toUpperCase()}</span><span><strong>{model.name}</strong><small>{model.id}</small></span><span className="model-cost"><strong>{formatPrice(model.promptPrice)}</strong><small>input</small></span>{model.id === form.model && <Check size={16} />}</button>)}
+                  {filteredModels.map((model) => <button type="button" key={model.id} onClick={() => chooseModel(model)} className={model.id === form.model ? 'selected' : ''}><span className="provider-badge">{provider.label.slice(0, 2).toUpperCase()}</span><span><strong>{model.name}</strong><small>{model.id}</small></span>{provider.id === 'openrouter' && <span className="model-cost"><strong>{formatPrice(model.promptPrice)}</strong><small>input</small></span>}{model.id === form.model && <Check size={16} />}</button>)}
                 </div>
               </div>
             )}
@@ -1415,9 +1442,9 @@ function SettingsPage({ settings, setSettings }) {
 
           <div className="model-facts">
             <div><span>CONTEXT</span><strong>{formatContext(selectedModel?.contextLength)}</strong></div>
-            <div><span>INPUT / 1M</span><strong>{formatPrice(selectedModel?.promptPrice)}</strong></div>
-            <div><span>OUTPUT / 1M</span><strong>{formatPrice(selectedModel?.completionPrice)}</strong></div>
-            <div><span>TOOLS</span><strong>{selectedModel?.supportsTools ? 'SUPPORTED' : 'MODEL DEPENDENT'}</strong></div>
+            <div><span>INPUT / 1M</span><strong>{provider.id === 'openrouter' ? formatPrice(selectedModel?.promptPrice) : 'Provider pricing'}</strong></div>
+            <div><span>OUTPUT / 1M</span><strong>{provider.id === 'openrouter' ? formatPrice(selectedModel?.completionPrice) : 'Provider pricing'}</strong></div>
+            <div><span>TOOLS</span><strong>{provider.id === 'openrouter' && selectedModel?.supportsTools ? 'SUPPORTED' : provider.id === 'openrouter' ? 'MODEL DEPENDENT' : 'OPENROUTER ONLY'}</strong></div>
           </div>
 
           <div className="rule" />
@@ -1446,11 +1473,11 @@ function SettingsPage({ settings, setSettings }) {
           </div>
           {error && <div className="error-banner">{error}</div>}
           {testStatus && <div className={`test-banner ${testStatus.ok ? 'success' : 'failure'}`}>{testStatus.ok ? <Check size={16} /> : <X size={16} />}<span>{testStatus.message}</span></div>}
-          <div className="settings-actions"><button type="button" className="button secondary" onClick={testModel} disabled={testing || !settings.apiKeyConfigured}>{testing ? <RefreshCw className="spin" size={16} /> : <Activity size={16} />}{testing ? 'Testing…' : 'Test saved model'}</button><button className="button primary" disabled={saving || !(form.searchSources || []).length}>{saving ? <RefreshCw className="spin" size={16} /> : saved ? <Check size={16} /> : null}{saved ? 'Saved' : saving ? 'Saving…' : 'Save settings'}</button></div>
+          <div className="settings-actions"><button type="button" className="button secondary" onClick={testModel} disabled={testing || !keyStatus.configured}>{testing ? <RefreshCw className="spin" size={16} /> : <Activity size={16} />}{testing ? 'Testing…' : 'Test saved model'}</button><button className="button primary" disabled={saving || !(form.searchSources || []).length}>{saving ? <RefreshCw className="spin" size={16} /> : saved ? <Check size={16} /> : null}{saved ? 'Saved' : saving ? 'Saving…' : 'Save settings'}</button></div>
         </section>
 
         <aside className="settings-aside">
-          <div className="panel active-model-card"><span className="eyebrow">ACTIVE MODEL</span><div className="active-model-mark"><Sparkles size={22} /></div><h3>{selectedModel?.name || form.model}</h3><code>{form.model}</code><p>This selection will apply to setup, search, tailoring, tracking, and interview preparation.</p><div className="live-line"><span className="model-pulse" /> READY TO SAVE</div></div>
+          <div className="panel active-model-card"><span className="eyebrow">ACTIVE PROVIDER / MODEL</span><div className="active-model-mark"><Sparkles size={22} /></div><h3>{selectedModel?.name || form.model}</h3><code>{provider.label} · {form.model}</code><p>This selection will apply to setup, search, tailoring, tracking, and interview preparation.</p><div className="live-line"><span className="model-pulse" /> {keyStatus.configured ? 'READY' : 'API KEY REQUIRED'}</div></div>
           <div className="privacy-card"><ShieldCheck size={18} /><div><strong>LOCAL SETTINGS</strong><p>Saved in <code>.data/settings.json</code>, which is excluded from Git.</p></div></div>
         </aside>
       </form>

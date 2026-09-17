@@ -2,16 +2,16 @@
 
 I got laid off and built a robot army to find my next job.
 
-This fork preserves the original nine job-search prompts and adds a local web console powered by [OpenRouter](https://openrouter.ai/). Choose any compatible text model once in Settings; setup, search planning, job analysis, resume tailoring, cover letters, interview prep, and reporting all use the saved selection.
+This fork preserves the original nine job-search prompts and adds a local web console that can use [OpenRouter](https://openrouter.ai/), Claude, ChatGPT, Kimi, or Gemini. Choose a provider and model once in Settings; setup, search planning, job analysis, resume tailoring, cover letters, interview prep, and reporting all use the saved selection.
 
-The OpenRouter key is handled by the local Express server and saved to a Git-ignored settings file. It is never compiled into the browser bundle. Profiles and application history are stored locally; selected CV/profile content is sent to OpenRouter when an AI workflow runs.
+Provider keys are handled by the local Express server and saved to Git-ignored settings files. They are never compiled into the browser bundle. Profiles and application history are stored locally; selected CV/profile content is sent to the provider chosen in Settings when an AI workflow runs.
 
 ## Web Console Quick Start
 
 ### Prerequisites
 
 - Node.js 20+
-- An [OpenRouter API key](https://openrouter.ai/keys)
+- An API key for at least one supported provider: [OpenRouter](https://openrouter.ai/keys), [Anthropic](https://console.anthropic.com/settings/keys), [OpenAI](https://platform.openai.com/api-keys), [Moonshot/Kimi](https://platform.kimi.ai/console/api-keys), or [Google AI Studio](https://aistudio.google.com/app/apikey)
 
 ### Run locally
 
@@ -20,7 +20,7 @@ npm install
 npm run dev
 ```
 
-Open `http://127.0.0.1:5173`, select **Settings**, add your OpenRouter key, choose a model from the live catalog, and save. You can also provide the key to the server with `OPENROUTER_API_KEY`.
+Open `http://127.0.0.1:5173`, select **Settings**, choose a provider, enter its key, choose a model, and save. OpenRouter is the only provider with a live model catalog and the built-in web-search/fetch tools.
 
 ```bash
 OPENROUTER_API_KEY=sk-or-v1-... npm run dev
@@ -34,8 +34,16 @@ For Railway, add these variables to the service:
 
 ```text
 OPENROUTER_API_KEY=your-openrouter-key
+ANTHROPIC_API_KEY=your-anthropic-key
+OPENAI_API_KEY=your-openai-key
+MOONSHOT_API_KEY=your-kimi-key
+GEMINI_API_KEY=your-gemini-key
 HMA_DATA_DIR=/data
+# Optional override for a regional Kimi-compatible endpoint
+KIMI_API_BASE_URL=https://api.moonshot.ai/v1
 ```
+
+Provider variables are optional; add only the providers you want to make available. A signed-in user can also save a provider key in Settings. Saved keys are stored per account under `.data/users/<account-id>/settings.json`, while environment keys take precedence and are never written to account files. The older single `apiKey` setting is migrated to `providerKeys.openrouter` automatically. Direct provider model lists are conservative server-owned defaults and can be updated in `server/settings.js`; OpenRouter models are loaded live from `/api/v1/models` after an OpenRouter key is configured. OpenRouter is currently the only provider that supports the job-search web tools.
 
 Attach a Railway Volume mounted at `/data` so accounts, profiles, settings, sessions, and application history survive redeployments. `PORT` is provided by Railway automatically.
 
@@ -62,7 +70,9 @@ The production server listens on `http://127.0.0.1:8787` by default. Set `PORT` 
 
 Settings are persisted per signed-in account in `.data/users/<account-id>/settings.json` and apply to every agent workflow:
 
-- OpenRouter model slug selected from the live `/api/v1/models` catalog
+- Selected provider: OpenRouter, Claude, ChatGPT, Kimi, or Gemini
+- Provider-specific API key status (raw keys are never returned by the API)
+- OpenRouter model slug selected from the live `/api/v1/models` catalog, or a server-owned direct-provider model list
 - Temperature
 - Maximum output tokens
 - Default job-search sources used by Step 3
@@ -97,14 +107,14 @@ flowchart LR
 ```
 
 1. **Create or select a profile.** Upload a Markdown, TXT, PDF, or DOCX CV, or paste the text directly. The local server extracts the source material and stores it with the selected profile.
-2. **Build the search configuration.** The selected OpenRouter model turns the profile into target roles, salary expectations, location preferences, exclusions, and search priorities. Review the result before searching.
+2. **Build the search configuration.** The selected provider and model turn the profile into target roles, salary expectations, location preferences, exclusions, and search priorities. Review the result before searching.
 3. **Find matching jobs.** Step 3 combines the saved configuration with the default sources and any custom careers pages for that profile. The server runs the source searches, returns structured job leads, and saves them by canonical posting URL so repeated searches do not create duplicate records.
 4. **Check the evidence.** Each lead shows whether its page was fetched, unavailable, previously checked, or unverified. A fetched page confirms that the URL could be read; it does not guarantee that the employer is still accepting applications.
 5. **Generate application material.** Select a saved role for analysis, a tailored cover letter, interview preparation, or resume export. The generated result is stored as an artifact on that job so it can be revisited from the profile or pipeline.
 6. **Track applications.** Move a role through New, Submitted, Interviewing, Offered, Closed / Rejected, or Withdrawn. Stage changes and notes are saved locally, and pipeline statistics are calculated without another AI request.
 7. **Back up the workspace.** Export profiles to JSON for safekeeping and restore them on another local copy of the app. Set `HMA_DATA_DIR` when you want the profile and settings files in a separate directory.
 
-The browser talks to the local Express server. The OpenRouter API key stays on that server, while the selected CV/profile context is sent to OpenRouter only when an AI workflow runs. Profiles, jobs, stages, and artifacts remain in the local data store unless you export or copy them yourself.
+The browser talks to the local Express server. Provider keys stay on that server, while the selected CV/profile context is sent only to the provider selected in Settings when an AI workflow runs. OpenRouter handles the live web-search/fetch tools; direct providers receive the text prompt without those tools. Profiles, jobs, stages, and artifacts remain in the local data store unless you export or copy them yourself.
 
 ## Original Claude Code Commands
 
