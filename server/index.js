@@ -5,12 +5,14 @@ import multer from 'multer';
 import path from 'node:path';
 import dns from 'node:dns/promises';
 import net from 'node:net';
+import crypto from 'node:crypto';
 import http from 'node:http';
 import https from 'node:https';
 import pdfParse from 'pdf-parse/lib/pdf-parse.js';
 import { fileURLToPath } from 'node:url';
 import { createSettingsStore } from './settings.js';
 import { createProfileStore } from './profiles.js';
+import { createAuthStore } from './auth.js';
 import { SEARCH_SOURCES, SEARCH_SOURCE_IDS } from '../shared/search-sources.js';
 import { canonicalJobUrl, extractJobLeads } from '../shared/jobs.js';
 
@@ -18,6 +20,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, '..');
 const store = createSettingsStore(rootDir);
 const profileStore = createProfileStore(rootDir);
+const authStore = createAuthStore(rootDir);
 const app = express();
 const port = Number(process.env.PORT) || 8787;
 // Railway routes traffic to the container network interface. Keep local runs
@@ -200,7 +203,8 @@ async function mapWithConcurrency(items, limit, worker, signal) {
 
 async function openRouterRequest(pathname, options = {}) {
   if (options.signal?.aborted) throw new DOMException('The request was cancelled.', 'AbortError');
-  const settings = await store.get({ includeSecret: true });
+  const { userId = '', ...requestOptions } = options;
+  const settings = await store.get({ includeSecret: true, userId });
   const headers = {
     'Content-Type': 'application/json',
     'HTTP-Referer': 'http://localhost:5173',
@@ -216,7 +220,7 @@ async function openRouterRequest(pathname, options = {}) {
     const abortFromCaller = () => timeoutController.abort();
     signal?.addEventListener('abort', abortFromCaller, { once: true });
     try {
-      const response = await fetch(`https://openrouter.ai/api/v1${pathname}`, { ...options, signal: timeoutController.signal, headers });
+      const response = await fetch(`https://openrouter.ai/api/v1${pathname}`, { ...requestOptions, signal: timeoutController.signal, headers });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
         const error = new Error(data?.error?.message || `OpenRouter returned ${response.status}`);
@@ -239,9 +243,135 @@ async function openRouterRequest(pathname, options = {}) {
 
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
 
-app.get('/api/profiles', async (_req, res) => {
+function authError(error, fallback = 'Authentication failed') {
+  const status = Number(error?.status) || 500;
+  return res => res.status(status).json({ error: { message: error?.message || fallback } });
+}
+
+function setSession(res, token) {
+  res.setHeader('Set-Cookie', authStore.sessionCookie(token));
+}
+
+function requestOrigin(req) {
+  if (process.env.APP_ORIGIN) return process.env.APP_ORIGIN.replace(/\/$/, '');
+  if (process.env.RAILWAY_PUBLIC_DOMAIN) return `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`;
+  const protocol = String(req.headers['x-forwarded-proto'] || req.protocol || 'http').split(',')[0].trim();
+  return `${protocol}://${req.headers.host || `localhost:${port}`}`;
+}
+
+function googleRedirectUri(req) {
+  return process.env.GOOGLE_REDIRECT_URI || `${requestOrigin(req)}/api/auth/google/callback`;
+}
+
+async function fetchGoogleUser(code, redirectUri) {
+  const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      code,
+      client_id: process.env.GOOGLE_CLIENT_ID,
+      client_secret: process.env.GOOGLE_CLIENT_SECRET,
+      redirect_uri: redirectUri,
+      grant_type: 'authorization_code',
+    }),
+  });
+  const tokenData = await tokenResponse.json().catch(() => ({}));
+  if (!tokenResponse.ok || !tokenData.access_token) throw new Error('Google sign-in could not be completed.');
+  const userResponse = await fetch('https://openidconnect.googleapis.com/v1/userinfo', {
+    headers: { Authorization: `Bearer ${tokenData.access_token}` },
+  });
+  const userData = await userResponse.json().catch(() => ({}));
+  if (!userResponse.ok || !userData.sub || !userData.email || userData.email_verified !== true) throw new Error('Google did not return a verified email account.');
+  return { sub: String(userData.sub), email: String(userData.email) };
+}
+
+app.get('/api/auth/config', async (_req, res) => {
+  res.json(await authStore.config());
+});
+
+app.get('/api/auth/me', async (req, res) => {
+  const user = await authStore.getUserForToken(authStore.parseSessionCookie(req));
+  if (!user) return res.status(401).json({ error: { message: 'Not signed in.' } });
+  res.json({ user });
+});
+
+app.post('/api/auth/register', async (req, res) => {
   try {
-    res.json(await profileStore.get());
+    const result = await authStore.register(req.body?.email, req.body?.password);
+    setSession(res, result.token);
+    res.status(201).json({ user: result.user });
+  } catch (error) {
+    authError(error)(res);
+  }
+});
+
+app.post('/api/auth/login', async (req, res) => {
+  try {
+    const result = await authStore.login(req.body?.email, req.body?.password);
+    setSession(res, result.token);
+    res.json({ user: result.user });
+  } catch (error) {
+    authError(error, 'Invalid email or password.')(res);
+  }
+});
+
+app.post('/api/auth/logout', async (req, res) => {
+  await authStore.logout(authStore.parseSessionCookie(req));
+  res.setHeader('Set-Cookie', authStore.clearSessionCookie());
+  res.json({ ok: true });
+});
+
+app.get('/api/auth/google/start', async (req, res) => {
+  if (!(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET)) {
+    return res.status(503).json({ error: { message: 'Google sign-in is not configured. Use an email and password account.' } });
+  }
+  const state = randomState();
+  const redirectUri = googleRedirectUri(req);
+  await authStore.beginGoogle(state, redirectUri);
+  const url = new URL('https://accounts.google.com/o/oauth2/v2/auth');
+  url.search = new URLSearchParams({ client_id: process.env.GOOGLE_CLIENT_ID, redirect_uri: redirectUri, response_type: 'code', scope: 'openid email profile', state, prompt: 'select_account' }).toString();
+  res.setHeader('Set-Cookie', authStore.oauthStateCookie(state));
+  res.redirect(url.toString());
+});
+
+app.get('/api/auth/google/callback', async (req, res) => {
+  const errorRedirect = `${requestOrigin(req)}/?authError=`;
+  try {
+    if (req.query.error) throw new Error('Google sign-in was cancelled.');
+    const stateValue = String(req.query.state || '');
+    if (!stateValue || stateValue !== authStore.parseOAuthStateCookie(req)) throw new Error('Google sign-in state was invalid. Please try again.');
+    const state = await authStore.consumeGoogleState(stateValue);
+    if (!state) throw new Error('Google sign-in expired. Please try again.');
+    const googleUser = await fetchGoogleUser(String(req.query.code || ''), state.redirectUri);
+    const result = await authStore.loginGoogle(googleUser);
+    res.setHeader('Set-Cookie', [authStore.clearOAuthStateCookie(), authStore.sessionCookie(result.token)]);
+    res.redirect(`${requestOrigin(req)}/?auth=success`);
+  } catch (error) {
+    res.setHeader('Set-Cookie', authStore.clearOAuthStateCookie());
+    res.redirect(`${errorRedirect}${encodeURIComponent(error.message || 'Google sign-in failed.')}`);
+  }
+});
+
+function randomState() {
+  return crypto.randomBytes(24).toString('base64url');
+}
+
+async function requireAuth(req, res, next) {
+  try {
+    const user = await authStore.getUserForToken(authStore.parseSessionCookie(req));
+    if (!user) return res.status(401).json({ error: { message: 'Sign in required.' } });
+    req.user = user;
+    next();
+  } catch (error) {
+    res.status(500).json({ error: { message: 'Authentication service unavailable.' } });
+  }
+}
+
+app.use('/api', requireAuth);
+
+app.get('/api/profiles', async (req, res) => {
+  try {
+    res.json(await profileStore.get({ userId: req.user.id }));
   } catch (error) {
     const result = apiError(error, 'Could not load profiles');
     res.status(result.status).json(result.body);
@@ -250,16 +380,16 @@ app.get('/api/profiles', async (_req, res) => {
 
 app.put('/api/profiles', async (req, res) => {
   try {
-    res.json(await profileStore.replace(req.body));
+    res.json(await profileStore.replace(req.body, { userId: req.user.id }));
   } catch (error) {
     const result = apiError(error, 'Could not save profiles');
     res.status(result.status).json(result.body);
   }
 });
 
-app.get('/api/settings', async (_req, res) => {
+app.get('/api/settings', async (req, res) => {
   try {
-    res.json(await store.get());
+    res.json(await store.get({ userId: req.user.id }));
   } catch (error) {
     const result = apiError(error, 'Could not load settings');
     res.status(result.status).json(result.body);
@@ -291,16 +421,16 @@ app.put('/api/settings', async (req, res) => {
       searchSources,
       apiKey: req.body.apiKey,
       clearApiKey: req.body.clearApiKey,
-    }));
+    }, { userId: req.user.id }));
   } catch (error) {
     const result = apiError(error, 'Could not save settings');
     res.status(result.status).json(result.body);
   }
 });
 
-app.get('/api/models', async (_req, res) => {
+app.get('/api/models', async (req, res) => {
   try {
-    const payload = await openRouterRequest('/models?output_modalities=text&sort=most-popular');
+    const payload = await openRouterRequest('/models?output_modalities=text&sort=most-popular', { userId: req.user.id });
     const models = (payload.data || [])
       .filter((model) => model?.id && model?.architecture?.output_modalities?.includes('text'))
       .map((model) => ({
@@ -357,9 +487,9 @@ app.post('/api/extract-resume', upload.single('file'), async (req, res) => {
   }
 });
 
-app.post('/api/test-model', async (_req, res) => {
+app.post('/api/test-model', async (req, res) => {
   try {
-    const settings = await store.get({ includeSecret: true });
+    const settings = await store.get({ includeSecret: true, userId: req.user.id });
     if (!settings.apiKey) return res.status(400).json({ error: { message: 'Add an OpenRouter API key first.' } });
     const payload = await openRouterRequest('/chat/completions', {
       method: 'POST',
@@ -369,6 +499,7 @@ app.post('/api/test-model', async (_req, res) => {
         temperature: 0,
         max_tokens: 16,
       }),
+      userId: req.user.id,
     });
     res.json({ ok: true, model: payload.model || settings.model });
   } catch (error) {
@@ -382,7 +513,7 @@ app.post('/api/infer-salary', async (req, res) => {
   const searchConfig = String(req.body.searchConfig || '').trim();
   if (!resumeText && !searchConfig) return res.status(400).json({ error: { message: 'Add a CV or complete the search configuration first.' } });
   try {
-    const settings = await store.get({ includeSecret: true });
+    const settings = await store.get({ includeSecret: true, userId: req.user.id });
     if (!settings.apiKey) return res.status(400).json({ error: { message: 'Add an OpenRouter API key in Settings first.' } });
     const payload = await openRouterRequest('/chat/completions', {
       method: 'POST',
@@ -395,6 +526,7 @@ app.post('/api/infer-salary', async (req, res) => {
           { role: 'user', content: `CV AND PROFILE\n${resumeText.slice(0, 20000)}\n\nPREVIOUS SEARCH ANALYSIS\n${searchConfig.slice(0, 20000)}` },
         ],
       }),
+      userId: req.user.id,
     });
     const content = payload.choices?.[0]?.message?.content || '';
     const jsonText = content.match(/\{[\s\S]*?\}/)?.[0];
@@ -430,7 +562,7 @@ app.post('/api/run-command', async (req, res) => {
   const abortRequest = () => requestController.abort();
   res.on('close', () => { if (!res.writableEnded) abortRequest(); });
   try {
-    const settings = await store.get({ includeSecret: true });
+    const settings = await store.get({ includeSecret: true, userId: req.user.id });
     if (!settings.apiKey) return res.status(400).json({ error: { message: 'Add an OpenRouter API key in Settings first.' } });
     const commandPrompt = await fs.readFile(path.join(rootDir, '.claude', 'commands', `${command}.md`), 'utf8');
     let prompt = commandPrompt;
@@ -495,6 +627,7 @@ app.post('/api/run-command', async (req, res) => {
               { role: 'user', content: `${plan.instruction}\n\nCandidate and search context:\n${userInput}` },
             ],
           }),
+          userId: req.user.id,
         });
         sourceUsage += Number(agentPayload.usage?.total_tokens || 0);
         sourceResults.push({ name: plan.name, status: 'agent-complete', note: 'Search agent returned; individual proof pages are checked below.' });
@@ -523,6 +656,7 @@ app.post('/api/run-command', async (req, res) => {
             { role: 'user', content: synthesisInput },
           ],
         }),
+        userId: req.user.id,
       });
       content = payload.choices?.[0]?.message?.content || '';
       } catch (error) {
@@ -544,6 +678,7 @@ app.post('/api/run-command', async (req, res) => {
             { role: 'user', content: userInput },
           ],
         }),
+        userId: req.user.id,
       });
       content = payload.choices?.[0]?.message?.content || '';
     }
@@ -586,7 +721,7 @@ app.post('/api/summarize-job', async (req, res) => {
   const url = String(req.body.url || '').trim();
   if (!/^https?:\/\//i.test(url)) return res.status(400).json({ error: { message: 'A valid job posting URL is required.' } });
   try {
-    const settings = await store.get({ includeSecret: true });
+    const settings = await store.get({ includeSecret: true, userId: req.user.id });
     if (!settings.apiKey) return res.status(400).json({ error: { message: 'Add an OpenRouter API key in Settings first.' } });
     const page = await fetchCustomSite(url);
     if (!page.ok || !page.text) throw new Error(`Could not read the job posting (HTTP ${page.status || 'unreachable'}).`);
@@ -601,6 +736,7 @@ app.post('/api/summarize-job', async (req, res) => {
           { role: 'user', content: `Job posting URL: ${url}\n\nPage text:\n${page.text.slice(0, 18000)}` },
         ],
       }),
+      userId: req.user.id,
     });
     res.json({ summary: payload.choices?.[0]?.message?.content || '' });
   } catch (error) {

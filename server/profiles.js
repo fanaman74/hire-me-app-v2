@@ -37,11 +37,36 @@ export function createProfileStore(rootDir) {
     ? path.resolve(process.env.HMA_DATA_DIR)
     : path.join(rootDir, '.data');
   const profilesPath = path.join(dataDir, 'profiles.json');
+  const migrationPath = path.join(dataDir, 'profiles-legacy-migrated.json');
   let pendingWrite = Promise.resolve();
 
-  async function get() {
+  function scopedPath(userId) {
+    const safeId = String(userId || '').replace(/[^a-zA-Z0-9_-]/g, '_');
+    return path.join(dataDir, 'users', safeId, 'profiles.json');
+  }
+
+  async function migrateLegacy(userId) {
+    if (!userId) return profilesPath;
+    const targetPath = scopedPath(userId);
+    try { await fs.access(targetPath); return targetPath; } catch (error) { if (error.code !== 'ENOENT') throw error; }
+    let marker = {};
+    try { marker = JSON.parse(await fs.readFile(migrationPath, 'utf8')); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+    if (!marker.userId) {
+      let legacy = null;
+      try { legacy = JSON.parse(await fs.readFile(profilesPath, 'utf8')); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+      await fs.mkdir(path.dirname(targetPath), { recursive: true });
+      if (legacy) await fs.writeFile(targetPath, `${JSON.stringify(normalizeProfileState(legacy), null, 2)}\n`, { mode: 0o600 });
+      marker.userId = userId;
+      await fs.mkdir(dataDir, { recursive: true });
+      await fs.writeFile(migrationPath, `${JSON.stringify(marker, null, 2)}\n`, { mode: 0o600 });
+    }
+    return targetPath;
+  }
+
+  async function get({ userId = '' } = {}) {
+    const storagePath = await migrateLegacy(userId);
     try {
-      const stored = JSON.parse(await fs.readFile(profilesPath, 'utf8'));
+      const stored = JSON.parse(await fs.readFile(storagePath, 'utf8'));
       return normalizeProfileState(stored);
     } catch (error) {
       if (error.code === 'ENOENT') return { ...EMPTY_PROFILE_STATE };
@@ -49,13 +74,14 @@ export function createProfileStore(rootDir) {
     }
   }
 
-  async function replace(value) {
+  async function replace(value, { userId = '' } = {}) {
     const next = normalizeProfileState(value);
+    const storagePath = await migrateLegacy(userId);
     pendingWrite = pendingWrite.catch(() => {}).then(async () => {
-      await fs.mkdir(dataDir, { recursive: true });
-      const temporaryPath = `${profilesPath}.tmp`;
+      await fs.mkdir(path.dirname(storagePath), { recursive: true });
+      const temporaryPath = `${storagePath}.tmp`;
       await fs.writeFile(temporaryPath, `${JSON.stringify(next, null, 2)}\n`, { mode: 0o600 });
-      await fs.rename(temporaryPath, profilesPath);
+      await fs.rename(temporaryPath, storagePath);
     });
     await pendingWrite;
     return next;

@@ -26,6 +26,27 @@ Open `http://127.0.0.1:5173`, select **Settings**, add your OpenRouter key, choo
 OPENROUTER_API_KEY=sk-or-v1-... npm run dev
 ```
 
+### Accounts and sign-in
+
+The web console requires an account. **Create a local account** with an email address and password, or sign in with Google when Google OAuth is configured. Passwords are stored as salted scrypt hashes and sessions use an HttpOnly cookie. Profiles and settings are scoped to the signed-in account, so users sharing one deployment cannot read each other's data.
+
+For Railway, add these variables to the service:
+
+```text
+OPENROUTER_API_KEY=your-openrouter-key
+HMA_DATA_DIR=/data
+```
+
+Attach a Railway Volume mounted at `/data` so accounts, profiles, settings, sessions, and application history survive redeployments. `PORT` is provided by Railway automatically.
+
+Google sign-in is optional. Add `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`, then register this callback URL in the Google Cloud OAuth client:
+
+```text
+https://your-public-domain.example/api/auth/google/callback
+```
+
+Set `APP_ORIGIN=https://your-public-domain.example` for a stable public origin. You may set `GOOGLE_REDIRECT_URI` explicitly when the registered callback URL differs from the public origin. Never commit these secrets or expose the client secret to the browser.
+
 For a production build:
 
 ```bash
@@ -37,7 +58,7 @@ The production server listens on `http://127.0.0.1:8787` by default. Set `PORT` 
 
 ### Settings
 
-Settings are persisted in `.data/settings.json` and apply to every agent workflow:
+Settings are persisted per signed-in account in `.data/users/<account-id>/settings.json` and apply to every agent workflow:
 
 - OpenRouter model slug selected from the live `/api/v1/models` catalog
 - Temperature
@@ -49,7 +70,7 @@ Use **Test saved model** after saving to verify the selected model and key toget
 
 The **Setup profile** workflow accepts Markdown, TXT, PDF, and DOCX resumes up to 10 MB. Uploaded files are parsed by the local server and remain editable in the source-material field before the agent runs.
 
-Profiles are reusable and isolated: each stores its own CV text, target role types, custom search sites, active selection, and nine-step workflow progress in `.data/profiles.json`. Browser storage provides an immediate local cache and existing browser-only profiles are migrated to the local file automatically. Switch the active profile from the homepage before starting a workflow.
+Profiles are reusable and isolated: each stores its own CV text, target role types, custom search sites, active selection, and nine-step workflow progress in the signed-in account's `.data/users/<account-id>/profiles.json` file. Browser storage provides an immediate local cache and existing browser-only profiles are migrated to the local file automatically. Switch the active profile from the homepage before starting a workflow.
 
 For isolated development or browser testing, set `HMA_DATA_DIR` to a separate writable directory. The profile and settings stores use that directory while prompts and the built app remain rooted in the project.
 

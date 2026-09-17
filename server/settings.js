@@ -14,10 +14,34 @@ export function createSettingsStore(rootDir) {
     ? path.resolve(process.env.HMA_DATA_DIR)
     : path.join(rootDir, '.data');
   const settingsPath = path.join(dataDir, 'settings.json');
+  const migrationPath = path.join(dataDir, 'settings-legacy-migrated.json');
 
-  async function readRaw() {
+  function scopedPath(userId) {
+    const safeId = String(userId || '').replace(/[^a-zA-Z0-9_-]/g, '_');
+    return path.join(dataDir, 'users', safeId, 'settings.json');
+  }
+
+  async function migrateLegacy(userId) {
+    if (!userId) return settingsPath;
+    const targetPath = scopedPath(userId);
+    try { await fs.access(targetPath); return targetPath; } catch (error) { if (error.code !== 'ENOENT') throw error; }
+    let marker = {};
+    try { marker = JSON.parse(await fs.readFile(migrationPath, 'utf8')); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+    if (!marker.userId) {
+      let legacy = null;
+      try { legacy = JSON.parse(await fs.readFile(settingsPath, 'utf8')); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+      await fs.mkdir(path.dirname(targetPath), { recursive: true });
+      if (legacy) await fs.writeFile(targetPath, `${JSON.stringify(legacy, null, 2)}\n`, { mode: 0o600 });
+      marker.userId = userId;
+      await fs.mkdir(dataDir, { recursive: true });
+      await fs.writeFile(migrationPath, `${JSON.stringify(marker, null, 2)}\n`, { mode: 0o600 });
+    }
+    return targetPath;
+  }
+
+  async function readRaw(storagePath = settingsPath) {
     try {
-      return JSON.parse(await fs.readFile(settingsPath, 'utf8'));
+      return JSON.parse(await fs.readFile(storagePath, 'utf8'));
     } catch (error) {
       if (error.code === 'ENOENT') return {};
       throw error;
@@ -25,8 +49,9 @@ export function createSettingsStore(rootDir) {
   }
 
   return {
-    async get({ includeSecret = false } = {}) {
-      const stored = { ...DEFAULT_SETTINGS, ...(await readRaw()) };
+    async get({ includeSecret = false, userId = '' } = {}) {
+      const storagePath = await migrateLegacy(userId);
+      const stored = { ...DEFAULT_SETTINGS, ...(await readRaw(storagePath)) };
       const apiKey = process.env.OPENROUTER_API_KEY || stored.apiKey || '';
       const result = {
         model: stored.model,
@@ -40,8 +65,9 @@ export function createSettingsStore(rootDir) {
       return result;
     },
 
-    async update(next) {
-      const current = await readRaw();
+    async update(next, { userId = '' } = {}) {
+      const storagePath = await migrateLegacy(userId);
+      const current = await readRaw(storagePath);
       const updated = {
         ...current,
         model: next.model,
@@ -55,8 +81,9 @@ export function createSettingsStore(rootDir) {
       }
       if (next.clearApiKey === true) delete updated.apiKey;
       await fs.mkdir(dataDir, { recursive: true });
-      await fs.writeFile(settingsPath, `${JSON.stringify(updated, null, 2)}\n`, { mode: 0o600 });
-      return this.get();
+      await fs.mkdir(path.dirname(storagePath), { recursive: true });
+      await fs.writeFile(storagePath, `${JSON.stringify(updated, null, 2)}\n`, { mode: 0o600 });
+      return this.get({ userId });
     },
   };
 }

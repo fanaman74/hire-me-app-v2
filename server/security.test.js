@@ -28,8 +28,14 @@ test('run-command returns structured jobs and source results with mocked provide
   const listener = await new Promise((resolve) => { const server = app.listen(0, '127.0.0.1', () => resolve(server)); });
   try {
     const address = listener.address();
+    const register = await new Promise((resolve, reject) => {
+      const request = http.request({ hostname: '127.0.0.1', port: address.port, path: '/api/auth/register', method: 'POST', headers: { 'content-type': 'application/json' } }, (response) => { let body = ''; response.on('data', (chunk) => { body += chunk; }); response.on('end', () => resolve({ status: response.statusCode, cookie: response.headers['set-cookie']?.[0], body: JSON.parse(body) })); });
+      request.on('error', reject);
+      request.end(JSON.stringify({ email: `test-${Date.now()}@example.com`, password: 'test-password-123' }));
+    });
+    assert.equal(register.status, 201, JSON.stringify(register.body));
     const result = await new Promise((resolve, reject) => {
-      const request = http.request({ hostname: '127.0.0.1', port: address.port, path: '/api/run-command', method: 'POST', headers: { 'content-type': 'application/json' } }, (response) => { let body = ''; response.on('data', (chunk) => { body += chunk; }); response.on('end', () => resolve({ status: response.statusCode, body: JSON.parse(body) })); });
+      const request = http.request({ hostname: '127.0.0.1', port: address.port, path: '/api/run-command', method: 'POST', headers: { 'content-type': 'application/json', cookie: register.cookie } }, (response) => { let body = ''; response.on('data', (chunk) => { body += chunk; }); response.on('end', () => resolve({ status: response.statusCode, body: JSON.parse(body) })); });
       request.on('error', reject);
       request.end(JSON.stringify({ command: 'find-me-a-job', input: 'Find engineering roles.' }));
     });

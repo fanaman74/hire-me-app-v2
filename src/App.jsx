@@ -21,6 +21,9 @@ import {
   KeyRound,
   LayoutDashboard,
   Link2,
+  LogOut,
+  LockKeyhole,
+  Mail,
   Menu,
   Play,
   Plus,
@@ -59,9 +62,12 @@ const WORKFLOWS = [
 
 const DEFAULT_MODEL = 'openai/gpt-4.1-mini';
 
-function loadCandidates() {
+function loadCandidates(scope = '') {
+  const suffix = scope ? `:${scope}` : '';
   try {
-    const parsed = JSON.parse(localStorage.getItem('hma-candidates') || '[]');
+    const scoped = localStorage.getItem(`hma-candidates${suffix}`);
+    const legacy = scope ? localStorage.getItem('hma-candidates') : null;
+    const parsed = JSON.parse(scoped || legacy || '[]');
     return Array.isArray(parsed) ? parsed.map((candidate) => {
       const savedJobs = Array.isArray(candidate.jobs) ? candidate.jobs : [];
       const recoveredJobs = recoverJobs(savedJobs, candidate.dismissedJobIds);
@@ -186,12 +192,13 @@ function mergeBackupCandidates(currentCandidates, backup) {
   return prepareCandidates([...byId.values()]);
 }
 
-function cacheProfiles(candidates, activeCandidateId) {
+function cacheProfiles(candidates, activeCandidateId, scope = '') {
+  const suffix = scope ? `:${scope}` : '';
   try {
-    localStorage.setItem('hma-candidates', JSON.stringify(candidates));
-    localStorage.setItem('hma-candidate-count', String(candidates.length));
-    if (activeCandidateId) localStorage.setItem('hma-active-candidate', activeCandidateId);
-    else localStorage.removeItem('hma-active-candidate');
+    localStorage.setItem(`hma-candidates${suffix}`, JSON.stringify(candidates));
+    localStorage.setItem(`hma-candidate-count${suffix}`, String(candidates.length));
+    if (activeCandidateId) localStorage.setItem(`hma-active-candidate${suffix}`, activeCandidateId);
+    else localStorage.removeItem(`hma-active-candidate${suffix}`);
   } catch (error) {
     console.warn('Browser profile cache is unavailable; profiles will still be saved to local disk.', error);
   }
@@ -200,7 +207,7 @@ function cacheProfiles(candidates, activeCandidateId) {
 async function api(path, options) {
   let response;
   try {
-    response = await fetch(path, options);
+    response = await fetch(path, { credentials: 'include', ...(options || {}) });
   } catch (error) {
     if (error instanceof TypeError) {
       throw new Error('The local API server is not reachable. Start it with `npm run dev`, then try again.');
@@ -323,14 +330,15 @@ function workflowOutputText(value) {
   try { return JSON.stringify(value, null, 2); } catch { return String(value); }
 }
 
-function App() {
+function WorkspaceApp({ user, onLogout, notice = '' }) {
   const [page, setPage] = useState('overview');
   const [mobileNav, setMobileNav] = useState(false);
   const [settings, setSettings] = useState({ model: DEFAULT_MODEL, temperature: 0.3, maxTokens: 4096, searchSources: DEFAULT_SEARCH_SOURCES, apiKeyConfigured: false });
   const [settingsLoading, setSettingsLoading] = useState(true);
   const [profileStorageError, setProfileStorageError] = useState('');
-  const [candidates, setCandidates] = useState(loadCandidates);
-  const [activeCandidateId, setActiveCandidateId] = useState(() => localStorage.getItem('hma-active-candidate') || '');
+  const storageScope = user.id;
+  const [candidates, setCandidates] = useState(() => loadCandidates(storageScope));
+  const [activeCandidateId, setActiveCandidateId] = useState(() => localStorage.getItem(`hma-active-candidate:${storageScope}`) || '');
   const candidatesRef = useRef(candidates);
   const activeCandidateIdRef = useRef(activeCandidateId);
   const profileSaveQueue = useRef(Promise.resolve());
@@ -347,8 +355,12 @@ function App() {
   }, []);
 
   useEffect(() => {
-    const localCandidates = loadCandidates();
-    const localActiveCandidateId = localStorage.getItem('hma-active-candidate') || '';
+    const localCandidates = loadCandidates(storageScope);
+    const scopedCacheKey = `hma-candidates:${storageScope}`;
+    const migratingLegacyCache = Boolean(storageScope && !localStorage.getItem(scopedCacheKey) && localStorage.getItem('hma-candidates'));
+    const localActiveCandidateId = localStorage.getItem(`hma-active-candidate:${storageScope}`)
+      || (migratingLegacyCache ? localStorage.getItem('hma-active-candidate') : '')
+      || '';
     api('/api/profiles')
       .then((stored) => {
         const restored = mergeCandidates(localCandidates, stored.candidates || []);
@@ -358,7 +370,12 @@ function App() {
         setActiveCandidateId(restoredActiveId);
         activeCandidateIdRef.current = restoredActiveId;
         setProfileSaveStatus('saved');
-        cacheProfiles(restored, restoredActiveId);
+        cacheProfiles(restored, restoredActiveId, storageScope);
+        if (migratingLegacyCache) {
+          localStorage.removeItem('hma-candidates');
+          localStorage.removeItem('hma-candidate-count');
+          localStorage.removeItem('hma-active-candidate');
+        }
         if (restored.length && (JSON.stringify(restored) !== JSON.stringify(stored.candidates || []) || restoredActiveId !== stored.activeCandidateId)) {
           return api('/api/profiles', {
             method: 'PUT',
@@ -369,17 +386,17 @@ function App() {
         return null;
       })
       .catch((error) => { setProfileSaveStatus('error'); setProfileStorageError(`Profiles could not be loaded from local disk: ${error.message}`); });
-  }, []);
+  }, [storageScope]);
 
   const activeCandidate = candidates.find((candidate) => candidate.id === activeCandidateId) || candidates[0] || null;
 
   useEffect(() => {
     try {
-      if (activeCandidate?.id) localStorage.setItem('hma-active-candidate', activeCandidate.id);
-      else localStorage.removeItem('hma-active-candidate');
+      if (activeCandidate?.id) localStorage.setItem(`hma-active-candidate:${storageScope}`, activeCandidate.id);
+      else localStorage.removeItem(`hma-active-candidate:${storageScope}`);
     } catch { /* The disk-backed profile store remains authoritative. */ }
     if (activeCandidate?.id && activeCandidateId !== activeCandidate.id) setActiveCandidateId(activeCandidate.id);
-  }, [activeCandidate?.id, activeCandidateId]);
+  }, [activeCandidate?.id, activeCandidateId, storageScope]);
 
   function persistCandidates(nextOrUpdater, nextActiveCandidateId = activeCandidateIdRef.current) {
     const next = typeof nextOrUpdater === 'function' ? nextOrUpdater(candidatesRef.current) : nextOrUpdater;
@@ -387,7 +404,7 @@ function App() {
     activeCandidateIdRef.current = nextActiveCandidateId;
     setCandidates(next);
     setActiveCandidateId(nextActiveCandidateId);
-    cacheProfiles(next, nextActiveCandidateId);
+    cacheProfiles(next, nextActiveCandidateId, storageScope);
     setProfileStorageError('');
     setProfileSaveStatus('saving');
     profileSaveQueue.current = profileSaveQueue.current.catch(() => {}).then(() => api('/api/profiles', {
@@ -520,8 +537,8 @@ function App() {
         <div className="sidebar-status">
           <div className="status-led" />
           <div>
-            <span className="status-title">LOCAL CONSOLE</span>
-          <span className="status-copy">Profiles local · AI via OpenRouter</span>
+            <span className="status-title">SIGNED IN</span>
+            <span className="status-copy">{user.email}</span>
           </div>
         </div>
         <div className="sidebar-model">
@@ -532,6 +549,7 @@ function App() {
             <ArrowRight size={14} />
           </button>
         </div>
+        <button type="button" className="button secondary compact auth-signout" onClick={onLogout}><LogOut size={14} /> Sign out</button>
       </aside>
 
       {mobileNav && <button className="scrim" onClick={() => setMobileNav(false)} aria-label="Close navigation" />}
@@ -551,6 +569,7 @@ function App() {
         </header>
 
         <div className="page-stage">
+          {notice && <div className="auth-notice workspace-auth-notice">{notice}</div>}
           {profileStorageError && <div className="error-banner"><span>{profileStorageError}</span></div>}
           {page === 'overview' && <Overview onNavigate={navigate} settings={settings} candidates={candidates} activeCandidate={activeCandidate} onSelectCandidate={selectCandidate} />}
           {page === 'workflows' && <WorkflowStudio settings={settings} activeCandidate={activeCandidate} onWorkflowComplete={completeWorkflow} onUpdateCandidateSites={updateCandidateSites} onUpdateCandidateSalary={updateCandidateSalary} onRemoveCandidateJob={removeCandidateJob} onSelectCandidateJob={selectCandidateJob} onUpdateCandidateJob={updateCandidateJob} onUpdateCandidateJobStage={updateCandidateJobStage} onOpenSettings={() => navigate('settings')} onOpenCandidates={() => navigate('candidates')} />}
@@ -562,6 +581,91 @@ function App() {
       </main>
     </div>
   );
+}
+
+function AuthScreen({ googleEnabled, initialNotice, onAuthenticated }) {
+  const [mode, setMode] = useState('login');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  async function submit(event) {
+    event.preventDefault();
+    setBusy(true);
+    setError('');
+    try {
+      const response = await fetch(`/api/auth/${mode}`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data?.error?.message || 'Could not sign in.');
+      onAuthenticated(data.user);
+    } catch (submitError) {
+      setError(submitError.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <main className="auth-shell">
+      <section className="auth-card">
+        <div className="auth-brand"><div className="brand-mark"><Bot size={22} strokeWidth={1.8} /></div><div><div className="brand-name">HIRE ME</div><div className="brand-name brand-accent">AGENTS</div></div></div>
+        <span className="eyebrow">PRIVATE WORKSPACE</span>
+        <h1>{mode === 'login' ? 'Welcome back' : 'Create your account'}</h1>
+        <p className="auth-copy">Sign in to keep your profiles, applications, and agent settings private to your account.</p>
+        {initialNotice && <div className="auth-notice">{initialNotice}</div>}
+        {googleEnabled ? <button type="button" className="button google-button" onClick={() => { window.location.href = '/api/auth/google/start'; }}><span className="google-g">G</span> Continue with Google</button> : <div className="auth-disabled"><Globe2 size={15} /> Google sign-in is not configured for this deployment.</div>}
+        <div className="auth-divider"><span>or use email</span></div>
+        <form onSubmit={submit} className="auth-form">
+          <label className="field-label" htmlFor="auth-email"><Mail size={13} /> EMAIL</label>
+          <input id="auth-email" type="email" autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} required />
+          <label className="field-label" htmlFor="auth-password"><LockKeyhole size={13} /> PASSWORD</label>
+          <input id="auth-password" type="password" autoComplete={mode === 'login' ? 'current-password' : 'new-password'} value={password} onChange={(event) => setPassword(event.target.value)} minLength={8} required />
+          {mode === 'register' && <small className="auth-help">Use at least 8 characters.</small>}
+          {error && <div className="error-banner">{error}</div>}
+          <button type="submit" className="button primary auth-submit" disabled={busy}>{busy ? 'Working…' : mode === 'login' ? 'Sign in' : 'Create account'}</button>
+        </form>
+        <button type="button" className="text-button auth-switch" onClick={() => { setMode(mode === 'login' ? 'register' : 'login'); setError(''); }}>{mode === 'login' ? 'Create a local account' : 'I already have an account'}</button>
+      </section>
+    </main>
+  );
+}
+
+function App() {
+  const [status, setStatus] = useState('loading');
+  const [user, setUser] = useState(null);
+  const [googleEnabled, setGoogleEnabled] = useState(false);
+  const [notice, setNotice] = useState('');
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('auth') === 'success') setNotice('Google sign-in complete.');
+    if (params.get('authError')) setNotice(params.get('authError'));
+    if (params.has('auth') || params.has('authError')) window.history.replaceState({}, '', window.location.pathname);
+    Promise.all([
+      fetch('/api/auth/config', { credentials: 'include' }).then((response) => response.json()),
+      fetch('/api/auth/me', { credentials: 'include' }).then(async (response) => response.ok ? response.json() : null),
+    ]).then(([config, current]) => {
+      setGoogleEnabled(Boolean(config.googleEnabled));
+      setUser(current?.user || null);
+      setStatus('ready');
+    }).catch(() => setStatus('ready'));
+  }, []);
+
+  async function logout() {
+    await fetch('/api/auth/logout', { method: 'POST', credentials: 'include' }).catch(() => {});
+    setUser(null);
+    setNotice('You have been signed out.');
+  }
+
+  if (status === 'loading') return <main className="auth-shell"><div className="auth-loading">Loading your workspace…</div></main>;
+  if (!user) return <AuthScreen googleEnabled={googleEnabled} initialNotice={notice} onAuthenticated={(nextUser) => { setNotice(''); setUser(nextUser); }} />;
+  return <WorkspaceApp user={user} onLogout={logout} notice={notice} />;
 }
 
 function PageIntro({ eyebrow, title, copy, action }) {
@@ -766,7 +870,7 @@ function WorkflowStudio({ settings, activeCandidate, onWorkflowComplete, onUpdat
     const body = new FormData();
     body.append('file', file);
     try {
-      const response = await fetch('/api/extract-resume', { method: 'POST', body });
+      const response = await fetch('/api/extract-resume', { method: 'POST', body, credentials: 'include' });
       const result = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(result?.error?.message || `Upload failed (${response.status})`);
       setInput(result.text);
@@ -1105,7 +1209,7 @@ function Candidates({ candidates, activeCandidate, onAddCandidate, onUpdateCandi
     const body = new FormData();
     body.append('file', file);
     try {
-      const response = await fetch('/api/extract-resume', { method: 'POST', body });
+      const response = await fetch('/api/extract-resume', { method: 'POST', body, credentials: 'include' });
       const result = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(result?.error?.message || `Upload failed (${response.status})`);
       setResumeText(result.text);
