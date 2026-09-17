@@ -56,6 +56,12 @@ function apiError(error, fallback = 'Request failed') {
 const FETCH_TIMEOUT_MS = 12000;
 const FETCH_MAX_BYTES = 2_000_000;
 const OPENROUTER_TIMEOUT_MS = 90_000;
+const ROUTERA_PRICE_PER_MILLION = 1_000_000;
+
+export function normalizeRouteraPrice(value) {
+  const amount = Number(value || 0);
+  return Number.isFinite(amount) ? amount / ROUTERA_PRICE_PER_MILLION : 0;
+}
 
 function isPrivateAddress(address) {
   const normalized = String(address || '').toLowerCase().replace(/^\[|\]$/g, '');
@@ -537,7 +543,7 @@ app.get('/api/models', async (req, res) => {
       });
       const models = (payload.data || [])
         .filter((model) => model?.id)
-        .map((model) => ({ id: model.id, name: model.name || model.id, description: model.description || '', contextLength: model.context_length || 0, promptPrice: Number(model.pricing?.prompt || 0), completionPrice: Number(model.pricing?.completion || 0), supportsTools: model.supported_parameters?.includes('tools') || false }));
+        .map((model) => ({ id: model.id, name: model.name || model.id, description: model.description || '', contextLength: model.context_length || 0, promptPrice: normalizeRouteraPrice(model.pricing?.prompt), completionPrice: normalizeRouteraPrice(model.pricing?.completion), supportsTools: model.supported_parameters?.includes('tools') || false }));
       return res.json({ provider, models: models.length ? models : modelsForProvider(provider) });
     }
     if (provider !== 'openrouter') return res.json({ provider, models: modelsForProvider(provider) });

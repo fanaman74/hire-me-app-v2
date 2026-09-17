@@ -5,7 +5,7 @@ import { extractJobLeads } from '../shared/jobs.js';
 
 process.env.NODE_ENV = 'test';
 process.env.OPENROUTER_API_KEY = 'test-key';
-const { app, assertPublicUrl, isPrivateAddress } = await import('./index.js');
+const { app, assertPublicUrl, isPrivateAddress, normalizeRouteraPrice } = await import('./index.js');
 
 test('posting URL guard blocks private, reserved, and mapped IPv6 addresses', async () => {
   for (const address of ['127.0.0.1', '10.0.0.4', '192.168.1.20', '100.64.0.1', '::1', '::ffff:7f00:1', 'fc00::1', 'ff02::1']) {
@@ -13,6 +13,12 @@ test('posting URL guard blocks private, reserved, and mapped IPv6 addresses', as
   }
   await assert.rejects(() => assertPublicUrl('http://127.0.0.1/internal'), /private network/);
   await assert.rejects(() => assertPublicUrl('http://[::1]/internal'), /private network/);
+});
+
+test('Routera catalog prices are normalized from per-million units', () => {
+  assert.ok(Math.abs(normalizeRouteraPrice('0.2') - 0.0000002) < Number.EPSILON);
+  assert.ok(Math.abs(normalizeRouteraPrice('1.2') - 0.0000012) < Number.EPSILON);
+  assert.equal(normalizeRouteraPrice('invalid'), 0);
 });
 
 test('search lead parser deduplicates canonical posting URLs', () => {
