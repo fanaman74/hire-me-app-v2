@@ -1370,6 +1370,7 @@ function SettingsPage({ settings, setSettings }) {
   }
 
   const selectedModel = models.find((model) => model.id === form.model);
+  const selectedModelUnavailable = provider.id === 'openrouter' && !modelsLoading && !modelsError && models.length > 0 && !selectedModel;
   const filteredModels = useMemo(() => {
     const needle = query.toLowerCase().trim();
     return models.filter((model) => !needle || `${model.name} ${model.id}`.toLowerCase().includes(needle)).slice(0, 80);
@@ -1397,6 +1398,11 @@ function SettingsPage({ settings, setSettings }) {
 
   async function testModel() {
     setTesting(true); setError(''); setTestStatus(null);
+    if (selectedModelUnavailable) {
+      setTestStatus({ ok: false, message: 'This saved model is no longer in OpenRouter’s catalog. Choose a current model and save settings.' });
+      setTesting(false);
+      return;
+    }
     try {
       const result = await api('/api/test-model', { method: 'POST' });
       setTestStatus({ ok: true, message: `Connected to ${result.model}` });
@@ -1483,6 +1489,7 @@ function SettingsPage({ settings, setSettings }) {
               </div>
             )}
           </div>
+          {selectedModelUnavailable && <div className="source-warning"><X size={15} /> This saved model is no longer available. Choose a current OpenRouter model, then save settings.</div>}
 
           <div className="model-facts">
             <div><span>CONTEXT</span><strong>{formatContext(selectedModel?.contextLength)}</strong></div>
@@ -1525,7 +1532,7 @@ function SettingsPage({ settings, setSettings }) {
           </div>
           {error && <div className="error-banner">{error}</div>}
           {testStatus && <div className={`test-banner ${testStatus.ok ? 'success' : 'failure'}`}>{testStatus.ok ? <Check size={16} /> : <X size={16} />}<span>{testStatus.message}</span></div>}
-          <div className="settings-actions"><button type="button" className="button secondary" onClick={testModel} disabled={testing || !keyStatus.configured}>{testing ? <RefreshCw className="spin" size={16} /> : <Activity size={16} />}{testing ? 'Testing…' : 'Test saved model'}</button><button className="button primary" disabled={saving || !(form.searchSources || []).length}>{saving ? <RefreshCw className="spin" size={16} /> : saved ? <Check size={16} /> : null}{saved ? 'Saved' : saving ? 'Saving…' : 'Save settings'}</button></div>
+          <div className="settings-actions"><button type="button" className="button secondary" onClick={testModel} disabled={testing || modelsLoading || !keyStatus.configured || selectedModelUnavailable}>{testing ? <RefreshCw className="spin" size={16} /> : <Activity size={16} />}{testing ? 'Testing…' : 'Test saved model'}</button><button className="button primary" disabled={saving || selectedModelUnavailable || !(form.searchSources || []).length}>{saving ? <RefreshCw className="spin" size={16} /> : saved ? <Check size={16} /> : null}{saved ? 'Saved' : saving ? 'Saving…' : 'Save settings'}</button></div>
         </section>
 
         <aside className="settings-aside">

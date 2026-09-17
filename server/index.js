@@ -202,7 +202,8 @@ async function mapWithConcurrency(items, limit, worker, signal) {
 }
 
 function providerError(provider, model, status, detail = '') {
-  const error = new Error(`${PROVIDERS[provider]?.label || provider} request failed for ${model || 'the selected model'}${detail ? `: ${detail.slice(0, 240)}` : ''}`);
+  const statusDetail = status ? ` (HTTP ${status})` : '';
+  const error = new Error(`${PROVIDERS[provider]?.label || provider} request failed for ${model || 'the selected model'}${statusDetail}${detail ? `: ${detail.slice(0, 240)}` : ''}`);
   error.status = status || 502;
   error.provider = provider;
   return error;
