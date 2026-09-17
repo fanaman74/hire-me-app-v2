@@ -59,6 +59,30 @@ Jobs discovered by Step 3 are saved to the active profile and merged by canonica
 
 The Pipeline page is backed by the saved job records and includes New, Submitted, Interviewing, Offered, Closed / Rejected, and Withdrawn stages. Track submission and pipeline stats run locally and do not require an OpenRouter request. Profile backups can be exported and restored from the Profiles page.
 
+## How the Web App Works
+
+The web console turns a CV into a repeatable job-search workspace. Each profile keeps its own resume, target roles, search settings, saved jobs, workflow results, application stages, notes, and generated materials.
+
+```mermaid
+flowchart LR
+    A["Create profile\nResume or CV file"] --> B["Build search config\nRoles, salary, location, filters"]
+    B --> C["Find matching jobs\nConfigured sources"]
+    C --> D["Review saved leads\nURL merge and evidence labels"]
+    D --> E["Analyze and tailor\nJob analysis, cover letter, resume"]
+    E --> F["Prepare and apply\nInterview prep and submission"]
+    F --> G["Track pipeline\nStats and stage history"]
+```
+
+1. **Create or select a profile.** Upload a Markdown, TXT, PDF, or DOCX CV, or paste the text directly. The local server extracts the source material and stores it with the selected profile.
+2. **Build the search configuration.** The selected OpenRouter model turns the profile into target roles, salary expectations, location preferences, exclusions, and search priorities. Review the result before searching.
+3. **Find matching jobs.** Step 3 combines the saved configuration with the default sources and any custom careers pages for that profile. The server runs the source searches, returns structured job leads, and saves them by canonical posting URL so repeated searches do not create duplicate records.
+4. **Check the evidence.** Each lead shows whether its page was fetched, unavailable, previously checked, or unverified. A fetched page confirms that the URL could be read; it does not guarantee that the employer is still accepting applications.
+5. **Generate application material.** Select a saved role for analysis, a tailored cover letter, interview preparation, or resume export. The generated result is stored as an artifact on that job so it can be revisited from the profile or pipeline.
+6. **Track applications.** Move a role through New, Submitted, Interviewing, Offered, Closed / Rejected, or Withdrawn. Stage changes and notes are saved locally, and pipeline statistics are calculated without another AI request.
+7. **Back up the workspace.** Export profiles to JSON for safekeeping and restore them on another local copy of the app. Set `HMA_DATA_DIR` when you want the profile and settings files in a separate directory.
+
+The browser talks to the local Express server. The OpenRouter API key stays on that server, while the selected CV/profile context is sent to OpenRouter only when an AI workflow runs. Profiles, jobs, stages, and artifacts remain in the local data store unless you export or copy them yourself.
+
 ## Original Claude Code Commands
 
 The original `.claude/commands/` files remain available for people who want the prompt-only Claude Code workflow described below.
@@ -67,7 +91,7 @@ The original `.claude/commands/` files remain available for people who want the 
 
 I built this the day I got laid off. Within 30 minutes of the call, I was designing the architecture. I got an interview within two weeks of my first application found with this team. I open-sourced it because if it works for me, it should work for anyone.
 
-## How It Works
+## How the Original Command Workflow Works
 
 ```mermaid
 graph TD
@@ -290,4 +314,3 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for how to add commands, job sources, and
 ## License
 
 [MIT](LICENSE)
-# hire-me-app-v2

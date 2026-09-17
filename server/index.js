@@ -20,6 +20,10 @@ const store = createSettingsStore(rootDir);
 const profileStore = createProfileStore(rootDir);
 const app = express();
 const port = Number(process.env.PORT) || 8787;
+// Railway routes traffic to the container network interface. Keep local runs
+// bound to loopback, but expose the listener when Railway provides its
+// deployment environment variables.
+const host = process.env.HOST || (process.env.RAILWAY_ENVIRONMENT_NAME ? '0.0.0.0' : '127.0.0.1');
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 10 * 1024 * 1024 },
@@ -623,8 +627,8 @@ app.use((error, _req, res, next) => {
 });
 
 if (process.env.NODE_ENV !== 'test') {
-  app.listen(port, '127.0.0.1', () => {
-    console.log(`Hire Me Agents API listening on http://127.0.0.1:${port}`);
+  app.listen(port, host, () => {
+    console.log(`Hire Me Agents API listening on http://${host}:${port}`);
   });
 }
 
