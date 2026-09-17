@@ -53,6 +53,10 @@ test('local accounts receive isolated sessions and scoped data', async () => {
     assert.equal(restoredSettings.body.searchCountry, 'Belgium');
     assert.equal(restoredSettings.body.customSearchSources.length, 1);
 
+    const aliasSettings = await jsonRequest(baseUrl, '/api/settings', { method: 'PUT', headers: { cookie: signBackIn.response.headers.get('set-cookie').split(';')[0] }, body: JSON.stringify({ provider: 'openrouter', model: '~deepseek/deepseek-flash-latest', temperature: 0.3, maxTokens: 4096, searchSources: ['remoteok'], searchCountry: 'Belgium', customSearchSources: restoredSettings.body.customSearchSources }) });
+    assert.equal(aliasSettings.response.status, 200, JSON.stringify(aliasSettings.body));
+    assert.equal(aliasSettings.body.model, '~deepseek/deepseek-flash-latest');
+
     const second = await jsonRequest(baseUrl, '/api/auth/register', { method: 'POST', body: JSON.stringify({ email: 'second@example.com', password: 'second-password' }) });
     assert.equal(second.response.status, 201);
     assert.equal(second.body.user.role, 'user');

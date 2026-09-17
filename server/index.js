@@ -467,7 +467,7 @@ app.put('/api/settings', async (req, res) => {
   const customSearchSources = customSourcesProvided ? normalizeCustomSearchSources(req.body.customSearchSources, { strict: true }) : null;
   const searchCountry = String(req.body.searchCountry || '').trim();
   const validDirectModel = modelsForProvider(provider).some((entry) => entry.id === model);
-  if (provider === 'openrouter' ? !/^[a-z0-9._-]+\/[a-z0-9._:@/-]+$/i.test(model) : !validDirectModel) {
+  if (provider === 'openrouter' ? !/^~?[a-z0-9._-]+\/[a-z0-9._:@/-]+$/i.test(model) : !validDirectModel) {
     return res.status(400).json({ error: { message: `Choose a valid ${PROVIDERS[provider].label} model.` } });
   }
   if (!Number.isFinite(temperature) || temperature < 0 || temperature > 2) return res.status(400).json({ error: { message: 'Temperature must be between 0 and 2.' } });
