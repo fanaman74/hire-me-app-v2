@@ -2,7 +2,7 @@
 
 I got laid off and built a robot army to find my next job.
 
-This fork preserves the original nine job-search prompts and adds a local web console that can use [OpenRouter](https://openrouter.ai/), Claude, ChatGPT, Kimi, or Gemini. Choose a provider and model once in Settings; setup, search planning, job analysis, resume tailoring, cover letters, interview prep, and reporting all use the saved selection.
+This fork preserves the original nine job-search prompts and adds a local web console that can use [OpenRouter](https://openrouter.ai/), Claude, ChatGPT, DeepSeek, Kimi, Gemini, [Routera](https://www.routera.one/), or any public OpenAI-compatible provider. Choose a provider and model once in Settings; setup, search planning, job analysis, resume tailoring, cover letters, interview prep, and reporting all use the saved selection.
 
 Provider keys are handled by the local Express server and saved to Git-ignored settings files. They are never compiled into the browser bundle. Profiles and application history are stored locally; selected CV/profile content is sent to the provider chosen in Settings when an AI workflow runs.
 
@@ -11,7 +11,7 @@ Provider keys are handled by the local Express server and saved to Git-ignored s
 ### Prerequisites
 
 - Node.js 20+
-- An API key for at least one supported provider: [OpenRouter](https://openrouter.ai/keys), [Anthropic](https://console.anthropic.com/settings/keys), [OpenAI](https://platform.openai.com/api-keys), [Moonshot/Kimi](https://platform.kimi.ai/console/api-keys), or [Google AI Studio](https://aistudio.google.com/app/apikey)
+- An API key for at least one supported provider: [OpenRouter](https://openrouter.ai/keys), [Anthropic](https://console.anthropic.com/settings/keys), [OpenAI](https://platform.openai.com/api-keys), [DeepSeek](https://platform.deepseek.com/api_keys), [Moonshot/Kimi](https://platform.kimi.ai/console/api-keys), [Google AI Studio](https://aistudio.google.com/app/apikey), or [Routera](https://www.routera.one/)
 
 ### Run locally
 
@@ -20,7 +20,7 @@ npm install
 npm run dev
 ```
 
-Open `http://127.0.0.1:5173`, select **Settings**, choose a provider, enter its key, choose a model, and save. OpenRouter is the only provider with a live model catalog and the built-in web-search/fetch tools.
+Open `http://127.0.0.1:5173`, select **Settings**, choose a provider, enter its key, choose a model, and save. OpenRouter and Routera load their model catalogs live; OpenRouter is the only provider with the built-in web-search/fetch tools. For a provider that is not listed, choose **Custom provider** and enter its public OpenAI-compatible base URL, API key, and model ID.
 
 ```bash
 OPENROUTER_API_KEY=sk-or-v1-... npm run dev
@@ -36,14 +36,16 @@ For Railway, add these variables to the service:
 OPENROUTER_API_KEY=your-openrouter-key
 ANTHROPIC_API_KEY=your-anthropic-key
 OPENAI_API_KEY=your-openai-key
+DEEPSEEK_API_KEY=your-deepseek-key
 MOONSHOT_API_KEY=your-kimi-key
 GEMINI_API_KEY=your-gemini-key
+ROUTERA_API_KEY=your-routera-key
 HMA_DATA_DIR=/data
 # Optional override for a regional Kimi-compatible endpoint
 KIMI_API_BASE_URL=https://api.moonshot.ai/v1
 ```
 
-Provider variables are optional; add only the providers you want to make available. A signed-in user can also save a provider key in Settings. Saved keys are stored per account under `.data/users/<account-id>/settings.json`, while environment keys take precedence and are never written to account files. The older single `apiKey` setting is migrated to `providerKeys.openrouter` automatically. Direct provider model lists are conservative server-owned defaults and can be updated in `server/settings.js`; OpenRouter models are loaded live from `/api/v1/models` after an OpenRouter key is configured. OpenRouter is currently the only provider that supports the job-search web tools.
+Provider variables are optional; add only the providers you want to make available. A signed-in user can also save a provider key in Settings. Saved keys are stored per account under `.data/users/<account-id>/settings.json`, while environment keys take precedence and are never written to account files. The older single `apiKey` setting is migrated to `providerKeys.openrouter` automatically. Direct provider model lists are conservative server-owned defaults and can be updated in `server/settings.js`; OpenRouter and Routera models are loaded live from their compatible `/models` endpoints after a key is configured. Custom provider URLs must be public HTTP or HTTPS endpoints; private-network targets are blocked before requests are made. OpenRouter is currently the only provider that supports the job-search web tools.
 
 Attach a Railway Volume mounted at `/data` so accounts, profiles, settings, sessions, and application history survive redeployments. `PORT` is provided by Railway automatically.
 
@@ -70,7 +72,7 @@ The production server listens on `http://127.0.0.1:8787` by default. Set `PORT` 
 
 Settings are persisted per signed-in account in `.data/users/<account-id>/settings.json` and apply to every agent workflow:
 
-- Selected provider: OpenRouter, Claude, ChatGPT, Kimi, or Gemini
+- Selected provider: OpenRouter, Claude, ChatGPT, DeepSeek, Kimi, Gemini, Routera, or a custom OpenAI-compatible provider
 - Provider-specific API key status (raw keys are never returned by the API)
 - OpenRouter model slug selected from the live `/api/v1/models` catalog, or a server-owned direct-provider model list
 - Temperature

@@ -57,6 +57,15 @@ test('local accounts receive isolated sessions and scoped data', async () => {
     assert.equal(aliasSettings.response.status, 200, JSON.stringify(aliasSettings.body));
     assert.equal(aliasSettings.body.model, '~deepseek/deepseek-flash-latest');
 
+    const customProviderSettings = await jsonRequest(baseUrl, '/api/settings', { method: 'PUT', headers: { cookie: signBackIn.response.headers.get('set-cookie').split(';')[0] }, body: JSON.stringify({ provider: 'custom', model: 'meta-llama/Llama-3.3-70B-Instruct', customProvider: { label: 'Together', baseUrl: 'https://api.together.xyz/v1', model: 'meta-llama/Llama-3.3-70B-Instruct' }, temperature: 0.3, maxTokens: 4096, searchSources: ['remoteok'], apiKey: 'custom-secret' }) });
+    assert.equal(customProviderSettings.response.status, 200, JSON.stringify(customProviderSettings.body));
+    assert.deepEqual(customProviderSettings.body.customProvider, { label: 'Together', baseUrl: 'https://api.together.xyz/v1', model: 'meta-llama/Llama-3.3-70B-Instruct' });
+    assert.equal(customProviderSettings.body.providerKeys.custom.key, undefined);
+
+    const routeraSettings = await jsonRequest(baseUrl, '/api/settings', { method: 'PUT', headers: { cookie: signBackIn.response.headers.get('set-cookie').split(';')[0] }, body: JSON.stringify({ provider: 'routera', model: 'openai/gpt-5.5', temperature: 0.3, maxTokens: 4096, searchSources: ['remoteok'] }) });
+    assert.equal(routeraSettings.response.status, 200, JSON.stringify(routeraSettings.body));
+    assert.equal(routeraSettings.body.provider, 'routera');
+
     const second = await jsonRequest(baseUrl, '/api/auth/register', { method: 'POST', body: JSON.stringify({ email: 'second@example.com', password: 'second-password' }) });
     assert.equal(second.response.status, 201);
     assert.equal(second.body.user.role, 'user');

@@ -333,7 +333,7 @@ function workflowOutputText(value) {
 function WorkspaceApp({ user, onLogout, notice = '' }) {
   const [page, setPage] = useState('overview');
   const [mobileNav, setMobileNav] = useState(false);
-  const [settings, setSettings] = useState({ provider: 'openrouter', model: DEFAULT_MODEL, temperature: 0.3, maxTokens: 4096, searchSources: DEFAULT_SEARCH_SOURCES, searchCountry: '', customSearchSources: [], providerKeys: {}, apiKeyConfigured: false });
+  const [settings, setSettings] = useState({ provider: 'openrouter', model: DEFAULT_MODEL, temperature: 0.3, maxTokens: 4096, searchSources: DEFAULT_SEARCH_SOURCES, searchCountry: '', customSearchSources: [], customProvider: null, providerKeys: {}, apiKeyConfigured: false });
   const [settingsLoading, setSettingsLoading] = useState(true);
   const [profileStorageError, setProfileStorageError] = useState('');
   const storageScope = user.id;
@@ -1316,8 +1316,11 @@ const PROVIDER_OPTIONS = [
   { id: 'openrouter', label: 'OpenRouter', help: 'Live model catalog, pricing, and web tools.', env: 'OPENROUTER_API_KEY', placeholder: 'sk-or-v1-…', defaultModel: 'openai/gpt-4.1-mini' },
   { id: 'claude', label: 'Claude', help: 'Direct Anthropic API access. Web tools are OpenRouter-only.', env: 'ANTHROPIC_API_KEY', placeholder: 'sk-ant-…', defaultModel: 'claude-sonnet-4-5-20250929' },
   { id: 'openai', label: 'ChatGPT', help: 'Direct OpenAI API access. Web tools are OpenRouter-only.', env: 'OPENAI_API_KEY', placeholder: 'sk-…', defaultModel: 'gpt-4.1-mini' },
+  { id: 'deepseek', label: 'DeepSeek', help: 'Direct DeepSeek API access. Web tools are OpenRouter-only.', env: 'DEEPSEEK_API_KEY', placeholder: 'DeepSeek API key', defaultModel: 'deepseek-chat' },
   { id: 'kimi', label: 'Kimi', help: 'Direct Moonshot/Kimi API access. Web tools are OpenRouter-only.', env: 'MOONSHOT_API_KEY', placeholder: 'Kimi API key', defaultModel: 'kimi-k3' },
   { id: 'gemini', label: 'Gemini', help: 'Direct Google AI API access. Web tools are OpenRouter-only.', env: 'GEMINI_API_KEY', placeholder: 'AIza…', defaultModel: 'gemini-2.5-flash' },
+  { id: 'routera', label: 'Routera', help: 'OpenAI-compatible Routera API access. Web tools are OpenRouter-only.', env: 'ROUTERA_API_KEY', placeholder: 'rta_…', defaultModel: 'openai/gpt-5.5' },
+  { id: 'custom', label: 'Custom provider', help: 'Connect any OpenAI-compatible provider with its base URL, API key, and model.', env: '', placeholder: 'Provider API key', defaultModel: '' },
 ];
 
 function normalizeSettingsSourceUrl(value) {
@@ -1346,6 +1349,8 @@ function SettingsPage({ settings, setSettings }) {
   const [customSourceDraft, setCustomSourceDraft] = useState({ label: '', url: '', description: '' });
   const [customSourceError, setCustomSourceError] = useState('');
   const provider = PROVIDER_OPTIONS.find((entry) => entry.id === form.provider) || PROVIDER_OPTIONS[0];
+  const customProvider = form.customProvider || { label: '', baseUrl: '', model: '' };
+  const providerLabel = provider.id === 'custom' && customProvider.label ? customProvider.label : provider.label;
   const keyStatus = settings.providerKeys?.[provider.id] || { configured: settings.apiKeyConfigured, source: settings.apiKeySource };
 
   useEffect(() => setForm((current) => ({ ...current, ...settings, provider: settings.provider || 'openrouter', apiKey: '' })), [settings]);
@@ -1364,13 +1369,14 @@ function SettingsPage({ settings, setSettings }) {
 
   function chooseProvider(id) {
     const option = PROVIDER_OPTIONS.find((entry) => entry.id === id) || PROVIDER_OPTIONS[0];
-    setForm((current) => ({ ...current, provider: option.id, model: option.defaultModel, apiKey: '' }));
+    const nextModel = option.id === 'custom' ? (form.customProvider?.model || '') : option.defaultModel;
+    setForm((current) => ({ ...current, provider: option.id, model: nextModel, apiKey: '' }));
     setQuery(''); setModelOpen(false);
     setTestStatus(null); setSaved(false);
   }
 
   const selectedModel = models.find((model) => model.id === form.model);
-  const selectedModelUnavailable = provider.id === 'openrouter' && !modelsLoading && !modelsError && models.length > 0 && !selectedModel;
+  const selectedModelUnavailable = ['openrouter', 'routera'].includes(provider.id) && !modelsLoading && !modelsError && models.length > 0 && !selectedModel;
   const filteredModels = useMemo(() => {
     const needle = query.toLowerCase().trim();
     return models.filter((model) => !needle || `${model.name} ${model.id}`.toLowerCase().includes(needle)).slice(0, 80);
@@ -1382,7 +1388,7 @@ function SettingsPage({ settings, setSettings }) {
       const next = await api('/api/settings', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ provider: values.provider, model: values.model, temperature: Number(values.temperature), maxTokens: Number(values.maxTokens), searchSources: values.searchSources || DEFAULT_SEARCH_SOURCES, searchCountry: values.searchCountry || '', customSearchSources: values.customSearchSources || [], apiKey: values.apiKey }),
+        body: JSON.stringify({ provider: values.provider, model: values.model, customProvider: values.customProvider, temperature: Number(values.temperature), maxTokens: Number(values.maxTokens), searchSources: values.searchSources || DEFAULT_SEARCH_SOURCES, searchCountry: values.searchCountry || '', customSearchSources: values.customSearchSources || [], apiKey: values.apiKey }),
       });
       setSettings(next);
       setForm((current) => ({ ...current, ...next, apiKey: '' }));
@@ -1461,20 +1467,25 @@ function SettingsPage({ settings, setSettings }) {
             <small id="provider-select-help" className="field-help">Only the selected provider’s connection and model settings are shown below.</small>
           </div>
           <div className="rule" />
-          <div className="settings-section-heading"><div className="setting-icon"><KeyRound size={19} /></div><div><h2>{provider.label} connection</h2><p>{provider.help}</p></div></div>
+          <div className="settings-section-heading"><div className="setting-icon"><KeyRound size={19} /></div><div><h2>{providerLabel} connection</h2><p>{provider.help}</p></div></div>
+          {provider.id === 'custom' && <div className="custom-provider-fields">
+            <div className="field-group"><label className="field-label" htmlFor="custom-provider-label">PROVIDER NAME</label><input id="custom-provider-label" value={customProvider.label} onChange={(event) => setForm({ ...form, customProvider: { ...customProvider, label: event.target.value } })} placeholder="For example, Groq or Together" maxLength={80} /><small className="field-help">Use a recognizable name for this connection.</small></div>
+            <div className="field-group"><label className="field-label" htmlFor="custom-provider-url">OPENAI-COMPATIBLE BASE URL</label><input id="custom-provider-url" value={customProvider.baseUrl} onChange={(event) => setForm({ ...form, customProvider: { ...customProvider, baseUrl: event.target.value } })} placeholder="https://api.example.com/v1" autoComplete="url" /><small className="field-help">The server adds <code>/chat/completions</code>. Use a public HTTP or HTTPS endpoint.</small></div>
+          </div>}
           <div className="field-group">
-            <label className="field-label" htmlFor="api-key">{provider.label.toUpperCase()} API KEY</label>
+            <label className="field-label" htmlFor="api-key">{providerLabel.toUpperCase()} API KEY</label>
             <div className="key-input"><input id="api-key" type="password" value={form.apiKey} onChange={(event) => setForm({ ...form, apiKey: event.target.value })} placeholder={keyStatus.configured ? 'Key saved — enter a new key to replace it' : provider.placeholder} autoComplete="off" /><span className={keyStatus.configured ? 'configured' : ''}>{keyStatus.configured ? keyStatus.source === 'environment' ? 'ENVIRONMENT' : 'SAVED' : 'NOT SET'}</span></div>
-            <small className="field-help">{keyStatus.source === 'environment' ? <><code>{provider.env}</code> is active and overrides any saved account key. Update that Railway variable to change the key.</> : <>You can also set <code>{provider.env}</code> in the server environment. Saved keys are masked and never returned.</>}</small>
+            <small className="field-help">{keyStatus.source === 'environment' ? <><code>{provider.env}</code> is active and overrides any saved account key. Update that Railway variable to change the key.</> : provider.id === 'custom' ? <>This key is saved to your account and used only with the custom base URL above. Saved keys are masked and never returned.</> : <>You can also set <code>{provider.env}</code> in the server environment. Saved keys are masked and never returned.</>}</small>
           </div>
 
           <div className="rule" />
-          <div className="settings-section-heading"><div className="setting-icon"><Sparkles size={19} /></div><div><h2>Agent model</h2><p>{provider.id === 'openrouter' ? 'Choose from OpenRouter’s live text model catalog. Pricing and tool support are shown below.' : `Choose a default ${provider.label} model. The catalog is maintained by the server.`}</p></div></div>
+          <div className="settings-section-heading"><div className="setting-icon"><Sparkles size={19} /></div><div><h2>Agent model</h2><p>{provider.id === 'openrouter' || provider.id === 'routera' ? `Choose from ${provider.label}’s live text model catalog. Pricing and tool support are shown below.` : provider.id === 'custom' ? 'Enter the model ID supported by your custom provider.' : `Choose a default ${provider.label} model. The catalog is maintained by the server.`}</p></div></div>
           <div className="field-group model-field">
             <label className="field-label">MODEL</label>
+            {provider.id === 'custom' && <input id="custom-provider-model" value={customProvider.model} onChange={(event) => { const model = event.target.value; setForm({ ...form, model, customProvider: { ...customProvider, model } }); setTestStatus(null); }} placeholder="model-name" autoComplete="off" />}
             <button type="button" className={`model-select ${modelOpen ? 'open' : ''}`} onClick={() => setModelOpen(!modelOpen)}>
               <span className="provider-badge">{form.model.split('/')[0]?.slice(0, 2).toUpperCase()}</span>
-              <span><strong>{selectedModel?.name || form.model}</strong><small>{form.model}</small></span>
+              <span><strong>{selectedModel?.name || form.model || 'Enter a model ID'}</strong><small>{form.model}</small></span>
               <ChevronDown size={17} />
             </button>
             {modelOpen && (
@@ -1484,7 +1495,7 @@ function SettingsPage({ settings, setSettings }) {
                   {modelsLoading && <div className="menu-state"><RefreshCw className="spin" size={16} /> Loading catalog…</div>}
                   {modelsError && <div className="menu-state error-text">{modelsError}</div>}
                   {!modelsLoading && !filteredModels.length && <div className="menu-state">No matching models</div>}
-                  {filteredModels.map((model) => <button type="button" key={model.id} onClick={() => chooseModel(model)} className={model.id === form.model ? 'selected' : ''}><span className="provider-badge">{provider.label.slice(0, 2).toUpperCase()}</span><span><strong>{model.name}</strong><small>{model.id}</small></span>{provider.id === 'openrouter' && <span className="model-cost"><strong>{formatPrice(model.promptPrice)}</strong><small>input</small></span>}{model.id === form.model && <Check size={16} />}</button>)}
+                  {filteredModels.map((model) => <button type="button" key={model.id} onClick={() => chooseModel(model)} className={model.id === form.model ? 'selected' : ''}><span className="provider-badge">{provider.label.slice(0, 2).toUpperCase()}</span><span><strong>{model.name}</strong><small>{model.id}</small></span>{['openrouter', 'routera'].includes(provider.id) && <span className="model-cost"><strong>{formatPrice(model.promptPrice)}</strong><small>input</small></span>}{model.id === form.model && <Check size={16} />}</button>)}
                 </div>
               </div>
             )}
@@ -1493,9 +1504,9 @@ function SettingsPage({ settings, setSettings }) {
 
           <div className="model-facts">
             <div><span>CONTEXT</span><strong>{formatContext(selectedModel?.contextLength)}</strong></div>
-            <div><span>INPUT / 1M</span><strong>{provider.id === 'openrouter' ? formatPrice(selectedModel?.promptPrice) : 'Provider pricing'}</strong></div>
-            <div><span>OUTPUT / 1M</span><strong>{provider.id === 'openrouter' ? formatPrice(selectedModel?.completionPrice) : 'Provider pricing'}</strong></div>
-            <div><span>TOOLS</span><strong>{provider.id === 'openrouter' && selectedModel?.supportsTools ? 'SUPPORTED' : provider.id === 'openrouter' ? 'MODEL DEPENDENT' : 'OPENROUTER ONLY'}</strong></div>
+            <div><span>INPUT / 1M</span><strong>{['openrouter', 'routera'].includes(provider.id) ? formatPrice(selectedModel?.promptPrice) : 'Provider pricing'}</strong></div>
+            <div><span>OUTPUT / 1M</span><strong>{['openrouter', 'routera'].includes(provider.id) ? formatPrice(selectedModel?.completionPrice) : 'Provider pricing'}</strong></div>
+            <div><span>TOOLS</span><strong>{['openrouter', 'routera'].includes(provider.id) && selectedModel?.supportsTools ? 'SUPPORTED' : ['openrouter', 'routera'].includes(provider.id) ? 'MODEL DEPENDENT' : 'OPENROUTER ONLY'}</strong></div>
           </div>
 
           <div className="rule" />

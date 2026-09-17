@@ -340,6 +340,8 @@ textarea::placeholder, input::placeholder { color: #5e6358; }
 .provider-select option { color: #e8ebe4; background: #080907; }
 .setting-icon { width: 39px; height: 39px; flex: 0 0 auto; display: grid; place-items: center; color: var(--signal); border: 1px solid var(--line); }
 .field-group { position: relative; }
+.custom-provider-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 18px; }
+.model-field > input { margin-bottom: 9px; }
 .key-input { position: relative; }
 .key-input input { padding-right: 95px; }
 .key-input span { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); padding: 5px 7px; color: #797e73; border: 1px solid var(--line); font-size: 7px; letter-spacing: .08em; }
@@ -446,7 +448,7 @@ input[type='range']::-webkit-slider-thumb { appearance: none; width: 13px; heigh
 
 @media (max-width: 780px) {
   .app-shell { display: block; }.main-panel { grid-column: auto; }.sidebar { transform: translateX(-100%); transition: transform .25s ease; }.sidebar.sidebar-open { transform: translateX(0); }.scrim { position: fixed; inset: 0; z-index: 25; background: rgba(0,0,0,.72); border: 0; }.mobile-close { display: grid; margin-left: auto; }.menu-button { display: grid; margin-right: 12px; }.topbar { padding: 0 15px; }.model-chip { max-width: 185px; }.page-stage { padding: 39px 18px 55px; }.page-intro { align-items: flex-start; flex-direction: column; margin-bottom: 32px; }.page-intro h1 { font-size: 42px; }.signal-strip { grid-template-columns: 1fr; border-bottom: 1px solid var(--line); }.signal-strip > div { min-height: 43px; border-right: 0; border-bottom: 1px solid var(--line); }.signal-strip > div:last-child { border-bottom: 0; }.metric-grid { grid-template-columns: 1fr 1fr; }.metric { min-height: 130px; }.studio-grid { grid-template-columns: 1fr; }.workflow-selector { display: grid; grid-template-columns: repeat(3, 1fr); }.workflow-selector button { grid-template-columns: 20px 18px 1fr; }.settings-aside { grid-template-columns: 1fr; }.control-grid { grid-template-columns: 1fr; }.pipeline-board { grid-template-columns: repeat(4, 230px); }.readiness-panel { grid-template-columns: 1fr; }.readiness-item { border-right: 0; }.model-facts { grid-template-columns: 1fr 1fr; }
-  .candidate-grid { grid-template-columns: 1fr; }.candidate-form-grid { grid-template-columns: 1fr; }.workflow-candidate-bar.active { grid-template-columns: 39px minmax(0, 1fr) auto; }.workflow-candidate-bar .workflow-progress-count { display: none; }
+  .candidate-grid { grid-template-columns: 1fr; }.candidate-form-grid { grid-template-columns: 1fr; }.custom-provider-fields { grid-template-columns: 1fr; }.workflow-candidate-bar.active { grid-template-columns: 39px minmax(0, 1fr) auto; }.workflow-candidate-bar .workflow-progress-count { display: none; }
 }
 
 @media (max-width: 500px) {

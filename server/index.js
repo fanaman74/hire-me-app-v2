@@ -10,7 +10,7 @@ import http from 'node:http';
 import https from 'node:https';
 import pdfParse from 'pdf-parse/lib/pdf-parse.js';
 import { fileURLToPath } from 'node:url';
-import { createSettingsStore, PROVIDERS, modelsForProvider, normalizeProvider, normalizeCustomSearchSources, MAX_CUSTOM_SEARCH_SOURCES } from './settings.js';
+import { createSettingsStore, PROVIDERS, modelsForProvider, normalizeProvider, normalizeCustomProvider, normalizeCustomSearchSources, MAX_CUSTOM_SEARCH_SOURCES } from './settings.js';
 import { createProfileStore } from './profiles.js';
 import { createAuthStore } from './auth.js';
 import { SEARCH_SOURCES, SEARCH_SOURCE_IDS } from '../shared/search-sources.js';
@@ -214,7 +214,7 @@ function safeProviderDetail(data) {
   return message.replace(/\b(?:sk-or-v1-|sk-|AIza|key-)[a-z0-9._-]{8,}\b/gi, '[redacted]');
 }
 
-async function fetchProvider(url, { provider, model, headers = {}, body, signal, method = 'POST' } = {}) {
+async function fetchProvider(url, { provider, model, headers = {}, body, signal, method = 'POST', redirect = 'follow' } = {}) {
   if (signal?.aborted) throw new DOMException('The request was cancelled.', 'AbortError');
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const timeoutController = new AbortController();
@@ -222,7 +222,7 @@ async function fetchProvider(url, { provider, model, headers = {}, body, signal,
     const abortFromCaller = () => timeoutController.abort();
     signal?.addEventListener('abort', abortFromCaller, { once: true });
     try {
-      const response = await fetch(url, { method, body, signal: timeoutController.signal, headers });
+      const response = await fetch(url, { method, body, signal: timeoutController.signal, headers, redirect });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
         const status = response.status;
@@ -273,6 +273,8 @@ async function providerRequest(pathname, options = {}) {
   }
   const headers = { 'Content-Type': 'application/json', ...(requestOptions.headers || {}) };
   const bodyData = typeof requestOptions.body === 'string' ? JSON.parse(requestOptions.body) : requestOptions.body;
+  const safeBody = { ...bodyData };
+  delete safeBody.tools;
   if (provider === 'openrouter') {
     headers.Authorization = `Bearer ${key}`;
     headers['HTTP-Referer'] = process.env.APP_ORIGIN || 'http://localhost:5173';
@@ -280,10 +282,15 @@ async function providerRequest(pathname, options = {}) {
     const data = await fetchProvider(`https://openrouter.ai/api/v1${pathname}`, { provider, model, ...requestOptions, headers, body: typeof requestOptions.body === 'string' ? requestOptions.body : requestOptions.body ? JSON.stringify(requestOptions.body) : undefined });
     return data;
   }
+  if (provider === 'custom') {
+    const customProvider = normalizeCustomProvider(settings.customProvider, { strict: true });
+    if (!customProvider) throw providerError(provider, model, 400, 'Complete the custom provider name, base URL, and model in Settings first.');
+    const baseUrl = await assertPublicUrl(customProvider.baseUrl);
+    headers.Authorization = `Bearer ${key}`;
+    return fetchProvider(`${baseUrl.toString().replace(/\/$/, '')}${pathname}`, { provider, model, ...requestOptions, headers, body: JSON.stringify(safeBody), redirect: 'manual' });
+  }
   if (pathname !== '/chat/completions') throw providerError(provider, model, 400, 'This provider does not expose a model catalog through this endpoint.');
   const messages = Array.isArray(bodyData?.messages) ? bodyData.messages : [];
-  const safeBody = { ...bodyData };
-  delete safeBody.tools;
   if (provider === 'claude') {
     const system = messages.filter((message) => message.role === 'system').map((message) => String(message.content || '')).join('\n\n');
     const converted = messages.filter((message) => message.role !== 'system').map((message) => ({ role: message.role === 'assistant' ? 'assistant' : 'user', content: String(message.content || '') }));
@@ -300,7 +307,13 @@ async function providerRequest(pathname, options = {}) {
     const data = await fetchProvider(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, { provider, model, ...requestOptions, headers: { ...headers, 'x-goog-api-key': key }, body: JSON.stringify(payload) });
     return normalizeDirectResponse(provider, model, data);
   }
-  const base = provider === 'kimi' ? (process.env.KIMI_API_BASE_URL || 'https://api.moonshot.ai/v1') : 'https://api.openai.com/v1';
+  const base = provider === 'kimi'
+    ? (process.env.KIMI_API_BASE_URL || 'https://api.moonshot.ai/v1')
+    : provider === 'deepseek'
+      ? (process.env.DEEPSEEK_API_BASE_URL || 'https://api.deepseek.com/v1')
+      : provider === 'routera'
+        ? (process.env.ROUTERA_API_BASE_URL || 'https://api.routera.one/v1')
+      : 'https://api.openai.com/v1';
   headers.Authorization = `Bearer ${key}`;
   return fetchProvider(`${base}${pathname}`, { provider, model, ...requestOptions, headers, body: JSON.stringify(safeBody) });
 }
@@ -471,8 +484,18 @@ app.put('/api/settings', async (req, res) => {
   const customSourcesProvided = req.body.customSearchSources !== undefined;
   const customSearchSources = customSourcesProvided ? normalizeCustomSearchSources(req.body.customSearchSources, { strict: true }) : null;
   const searchCountry = String(req.body.searchCountry || '').trim();
+  const customProvider = provider === 'custom' ? normalizeCustomProvider(req.body.customProvider, { strict: true }) : undefined;
   const validDirectModel = modelsForProvider(provider).some((entry) => entry.id === model);
-  if (provider === 'openrouter' ? !/^~?[a-z0-9._-]+\/[a-z0-9._:@/-]+$/i.test(model) : !validDirectModel) {
+  const validRouteraModel = provider === 'routera' && /^[a-z0-9._:-]+\/[a-z0-9._:@/-]+$/i.test(model);
+  const validCustomModel = provider === 'custom' && customProvider?.model === model;
+  const modelIsValid = provider === 'openrouter'
+    ? /^~?[a-z0-9._-]+\/[a-z0-9._:@/-]+$/i.test(model)
+    : provider === 'custom'
+      ? validCustomModel
+      : provider === 'routera'
+        ? validRouteraModel
+        : validDirectModel;
+  if (!modelIsValid) {
     return res.status(400).json({ error: { message: `Choose a valid ${PROVIDERS[provider].label} model.` } });
   }
   if (!Number.isFinite(temperature) || temperature < 0 || temperature > 2) return res.status(400).json({ error: { message: 'Temperature must be between 0 and 2.' } });
@@ -484,7 +507,7 @@ app.put('/api/settings', async (req, res) => {
     const effectiveCustomSources = customSourcesProvided ? customSearchSources : existing.customSearchSources;
     const validSourceIds = new Set([...SEARCH_SOURCE_IDS, ...effectiveCustomSources.map((source) => source.id)]);
     if (!searchSources.length || searchSources.some((source) => !validSourceIds.has(source))) return res.status(400).json({ error: { message: 'Select at least one valid search source.' } });
-    res.json(await store.update({ provider, model, temperature, maxTokens, searchSources, searchCountry, customSearchSources: effectiveCustomSources, apiKey: req.body.apiKey, clearApiKey: req.body.clearApiKey }, { userId: req.user.id }));
+    res.json(await store.update({ provider, model, temperature, maxTokens, searchSources, searchCountry, customSearchSources: effectiveCustomSources, ...(provider === 'custom' ? { customProvider } : {}), apiKey: req.body.apiKey, clearApiKey: req.body.clearApiKey }, { userId: req.user.id }));
   } catch (error) {
     const result = apiError(error, 'Could not save settings');
     res.status(result.status).json(result.body);
@@ -494,6 +517,29 @@ app.get('/api/models', async (req, res) => {
   try {
     const settings = await store.get({ userId: req.user.id, includeSecret: true });
     const provider = normalizeProvider(req.query.provider || settings.provider);
+    if (provider === 'custom') {
+      const customProvider = normalizeCustomProvider(settings.customProvider);
+      if (!customProvider) return res.json({ provider, models: [] });
+      return res.json({ provider, models: [{ id: customProvider.model, name: customProvider.model, description: `${customProvider.label} model`, contextLength: 0, supportsTools: false }] });
+    }
+    if (provider === 'routera') {
+      const key = settings.providerKeys?.routera || '';
+      if (!key) {
+        const error = new Error('Add a Routera API key in Settings to load its live model catalog.');
+        error.status = 400;
+        throw error;
+      }
+      const payload = await fetchProvider(`${(process.env.ROUTERA_API_BASE_URL || 'https://api.routera.one/v1').replace(/\/$/, '')}/models`, {
+        provider: 'routera',
+        model: 'model catalog',
+        method: 'GET',
+        headers: { Authorization: `Bearer ${key}` },
+      });
+      const models = (payload.data || [])
+        .filter((model) => model?.id)
+        .map((model) => ({ id: model.id, name: model.name || model.id, description: model.description || '', contextLength: model.context_length || 0, promptPrice: Number(model.pricing?.prompt || 0), completionPrice: Number(model.pricing?.completion || 0), supportsTools: model.supported_parameters?.includes('tools') || false }));
+      return res.json({ provider, models: models.length ? models : modelsForProvider(provider) });
+    }
     if (provider !== 'openrouter') return res.json({ provider, models: modelsForProvider(provider) });
     // The model picker can request OpenRouter while another provider is still
     // selected in the unsaved form, so use the OpenRouter key explicitly here.

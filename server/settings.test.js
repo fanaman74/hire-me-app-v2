@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { customSearchSourceId } from '../shared/search-sources.js';
-import { createSettingsStore, DEFAULT_SETTINGS, modelsForProvider } from './settings.js';
+import { createSettingsStore, DEFAULT_SETTINGS, modelsForProvider, normalizeCustomProvider } from './settings.js';
 
 test('settings store returns defaults and persists model choices', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'hire-me-agents-'));
@@ -45,6 +45,22 @@ test('settings store migrates legacy OpenRouter keys and keeps provider keys pri
   assert.equal(direct.providerKeys.openrouter, 'legacy-openrouter-key');
   assert.deepEqual(modelsForProvider('gemini').map((model) => model.id), ['gemini-2.5-flash', 'gemini-2.5-pro']);
   assert.deepEqual(modelsForProvider('kimi').map((model) => model.id), ['kimi-k3', 'kimi-k2.6']);
+  assert.deepEqual(modelsForProvider('deepseek').map((model) => model.id), ['deepseek-chat', 'deepseek-reasoner']);
+  assert.deepEqual(modelsForProvider('routera').map((model) => model.id), ['openai/gpt-5.5']);
+});
+
+test('settings store persists custom OpenAI-compatible providers without exposing keys', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'hire-me-agents-custom-provider-'));
+  const store = createSettingsStore(root);
+  const customProvider = { label: 'Together', baseUrl: 'https://api.together.xyz/v1/', model: 'meta-llama/Llama-3.3-70B-Instruct' };
+  assert.deepEqual(normalizeCustomProvider(customProvider), { label: 'Together', baseUrl: 'https://api.together.xyz/v1', model: 'meta-llama/Llama-3.3-70B-Instruct' });
+  await store.update({ provider: 'custom', model: customProvider.model, customProvider, temperature: 0.3, maxTokens: 4096, searchSources: ['remoteok'], apiKey: 'custom-secret' });
+  const publicSettings = await store.get();
+  assert.equal(publicSettings.provider, 'custom');
+  assert.deepEqual(publicSettings.customProvider, { label: 'Together', baseUrl: 'https://api.together.xyz/v1', model: customProvider.model });
+  assert.equal(publicSettings.providerKeys.custom.key, undefined);
+  const privateSettings = await store.get({ includeSecret: true });
+  assert.equal(privateSettings.apiKey, 'custom-secret');
 });
 
 test('settings store persists country and normalized custom sources', async () => {

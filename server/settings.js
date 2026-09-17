@@ -6,8 +6,11 @@ export const PROVIDERS = {
   openrouter: { id: 'openrouter', label: 'OpenRouter', env: 'OPENROUTER_API_KEY' },
   claude: { id: 'claude', label: 'Claude', env: 'ANTHROPIC_API_KEY' },
   openai: { id: 'openai', label: 'ChatGPT', env: 'OPENAI_API_KEY' },
+  deepseek: { id: 'deepseek', label: 'DeepSeek', env: 'DEEPSEEK_API_KEY' },
   kimi: { id: 'kimi', label: 'Kimi', env: 'MOONSHOT_API_KEY' },
   gemini: { id: 'gemini', label: 'Gemini', env: 'GEMINI_API_KEY' },
+  routera: { id: 'routera', label: 'Routera', env: 'ROUTERA_API_KEY' },
+  custom: { id: 'custom', label: 'Custom provider', env: null },
 };
 
 export const DIRECT_MODELS = {
@@ -19,6 +22,13 @@ export const DIRECT_MODELS = {
     { id: 'gpt-4.1', name: 'GPT-4.1', description: 'Strong general purpose model', contextLength: 1047576, supportsTools: false },
     { id: 'gpt-4.1-mini', name: 'GPT-4.1 Mini', description: 'Fast, capable, and economical', contextLength: 1047576, supportsTools: false },
     { id: 'gpt-4o-mini', name: 'GPT-4o Mini', description: 'Fast everyday model', contextLength: 128000, supportsTools: false },
+  ],
+  deepseek: [
+    { id: 'deepseek-chat', name: 'DeepSeek Chat', description: 'Fast general-purpose DeepSeek model', contextLength: 131072, supportsTools: false },
+    { id: 'deepseek-reasoner', name: 'DeepSeek Reasoner', description: 'DeepSeek reasoning model', contextLength: 131072, supportsTools: false },
+  ],
+  routera: [
+    { id: 'openai/gpt-5.5', name: 'OpenAI: GPT-5.5', description: 'Routera OpenAI-compatible default model', contextLength: 0, supportsTools: false },
   ],
   kimi: [
     { id: 'kimi-k3', name: 'Kimi K3', description: 'Frontier multimodal Kimi model', contextLength: 1000000, supportsTools: false },
@@ -41,6 +51,9 @@ export const DEFAULT_SETTINGS = {
 };
 
 export const MAX_CUSTOM_SEARCH_SOURCES = 20;
+export const MAX_CUSTOM_PROVIDER_LABEL = 80;
+export const MAX_CUSTOM_PROVIDER_URL = 500;
+export const MAX_CUSTOM_PROVIDER_MODEL = 160;
 
 function normalizedUrl(value) {
   const raw = String(value || '').trim();
@@ -74,6 +87,19 @@ export function normalizeCustomSearchSources(value, { strict = false } = {}) {
     if (!normalized.some((item) => item.id === source.id)) normalized.push(source);
   }
   return normalized;
+}
+
+export function normalizeCustomProvider(value, { strict = false } = {}) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return strict ? null : null;
+  const label = String(value.label || '').trim().slice(0, MAX_CUSTOM_PROVIDER_LABEL);
+  const model = String(value.model || '').trim().slice(0, MAX_CUSTOM_PROVIDER_MODEL);
+  const rawBaseUrl = String(value.baseUrl || '').trim();
+  if (!label || !model || !rawBaseUrl || rawBaseUrl.length > MAX_CUSTOM_PROVIDER_URL || label.length < 2 || !/^[a-zA-Z0-9][a-zA-Z0-9._:/-]*$/.test(model)) return strict ? null : null;
+  let url;
+  try { url = new URL(/^https?:\/\//i.test(rawBaseUrl) ? rawBaseUrl : `https://${rawBaseUrl}`); } catch { return strict ? null : null; }
+  if (!['http:', 'https:'].includes(url.protocol) || !url.hostname.includes('.') || url.username || url.password || url.search || url.hash || url.pathname.length > 450) return strict ? null : null;
+  url.pathname = url.pathname.replace(/\/+$/, '');
+  return { label, baseUrl: url.toString().replace(/\/$/, ''), model };
 }
 
 export function normalizeProvider(value) { return Object.hasOwn(PROVIDERS, value) ? value : DEFAULT_SETTINGS.provider; }
@@ -142,9 +168,10 @@ export function createSettingsStore(rootDir) {
       const provider = normalizeProvider(raw.provider);
       const keys = Object.fromEntries(Object.keys(PROVIDERS).map((id) => [id, envKey(id).key || storedKeys[id] || '']));
       const selectedKey = keys[provider] || '';
-      const directDefault = modelsForProvider(provider)[0]?.id;
+      const customProvider = normalizeCustomProvider(raw.customProvider);
+      const directDefault = provider === 'custom' ? customProvider?.model : modelsForProvider(provider)[0]?.id;
       const savedModel = String(raw.model || '');
-      const model = provider === 'openrouter' || modelsForProvider(provider).some((entry) => entry.id === savedModel) ? savedModel || DEFAULT_SETTINGS.model : directDefault;
+      const model = provider === 'openrouter' || provider === 'custom' || provider === 'routera' || modelsForProvider(provider).some((entry) => entry.id === savedModel) ? savedModel || (provider === 'openrouter' ? DEFAULT_SETTINGS.model : directDefault || '') : directDefault;
       const customSearchSources = normalizeCustomSearchSources(raw.customSearchSources);
       const validSourceIds = new Set([...SEARCH_SOURCE_IDS, ...customSearchSources.map((source) => source.id)]);
       const searchSources = Array.isArray(raw.searchSources)
@@ -158,6 +185,7 @@ export function createSettingsStore(rootDir) {
         searchSources: searchSources.length ? searchSources : DEFAULT_SEARCH_SOURCES,
         searchCountry: typeof raw.searchCountry === 'string' ? raw.searchCountry.trim().slice(0, 120) : '',
         customSearchSources,
+        customProvider,
         providerKeys: publicProviderKeyStatus(storedKeys),
         apiKeyConfigured: Boolean(selectedKey),
         apiKeySource: envKey(provider).key ? 'environment' : selectedKey ? 'settings' : null,
@@ -192,7 +220,15 @@ export function createSettingsStore(rootDir) {
         error.status = 400;
         throw error;
       }
-      const updated = { ...current, provider, model: next.model, temperature: next.temperature, maxTokens: next.maxTokens, searchSources: next.searchSources, searchCountry, customSearchSources, providerKeys };
+      const customProvider = next.customProvider === undefined
+        ? normalizeCustomProvider(current.customProvider)
+        : normalizeCustomProvider(next.customProvider, { strict: true });
+      if (provider === 'custom' && !customProvider) {
+        const error = new Error('Custom provider name, base URL, and model are required.');
+        error.status = 400;
+        throw error;
+      }
+      const updated = { ...current, provider, model: next.model, temperature: next.temperature, maxTokens: next.maxTokens, searchSources: next.searchSources, searchCountry, customSearchSources, customProvider, providerKeys };
       delete updated.apiKey;
       delete updated.customSearchSites;
       await fs.mkdir(dataDir, { recursive: true });
