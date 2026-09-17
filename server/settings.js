@@ -94,7 +94,7 @@ export function normalizeCustomProvider(value, { strict = false } = {}) {
   const label = String(value.label || '').trim().slice(0, MAX_CUSTOM_PROVIDER_LABEL);
   const model = String(value.model || '').trim().slice(0, MAX_CUSTOM_PROVIDER_MODEL);
   const rawBaseUrl = String(value.baseUrl || '').trim();
-  if (!label || !model || !rawBaseUrl || rawBaseUrl.length > MAX_CUSTOM_PROVIDER_URL || label.length < 2 || !/^[a-zA-Z0-9][a-zA-Z0-9._:/-]*$/.test(model)) return strict ? null : null;
+  if (!label || !model || !rawBaseUrl || rawBaseUrl.length > MAX_CUSTOM_PROVIDER_URL || label.length < 2 || !/^[a-zA-Z0-9][a-zA-Z0-9._:@/-]*$/.test(model)) return strict ? null : null;
   let url;
   try { url = new URL(/^https?:\/\//i.test(rawBaseUrl) ? rawBaseUrl : `https://${rawBaseUrl}`); } catch { return strict ? null : null; }
   if (!['http:', 'https:'].includes(url.protocol) || !url.hostname.includes('.') || url.username || url.password || url.search || url.hash || url.pathname.length > 450) return strict ? null : null;
