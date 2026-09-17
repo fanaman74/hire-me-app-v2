@@ -1375,20 +1375,24 @@ function SettingsPage({ settings, setSettings }) {
     return models.filter((model) => !needle || `${model.name} ${model.id}`.toLowerCase().includes(needle)).slice(0, 80);
   }, [models, query]);
 
-  async function saveSettings(event) {
-    event.preventDefault();
+  async function persistSettings(values) {
     setSaving(true); setError(''); setSaved(false); setTestStatus(null);
     try {
       const next = await api('/api/settings', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ provider: form.provider, model: form.model, temperature: Number(form.temperature), maxTokens: Number(form.maxTokens), searchSources: form.searchSources || DEFAULT_SEARCH_SOURCES, searchCountry: form.searchCountry || '', customSearchSources: form.customSearchSources || [], apiKey: form.apiKey }),
+        body: JSON.stringify({ provider: values.provider, model: values.model, temperature: Number(values.temperature), maxTokens: Number(values.maxTokens), searchSources: values.searchSources || DEFAULT_SEARCH_SOURCES, searchCountry: values.searchCountry || '', customSearchSources: values.customSearchSources || [], apiKey: values.apiKey }),
       });
       setSettings(next);
       setForm((current) => ({ ...current, ...next, apiKey: '' }));
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
     } catch (err) { setError(err.message); } finally { setSaving(false); }
+  }
+
+  async function saveSettings(event) {
+    event.preventDefault();
+    await persistSettings(form);
   }
 
   async function testModel() {
@@ -1417,21 +1421,24 @@ function SettingsPage({ settings, setSettings }) {
     setSaved(false);
   }
 
-  function addCustomSearchSource() {
+  async function addCustomSearchSource() {
     const url = normalizeSettingsSourceUrl(customSourceDraft.url);
     if (!url) { setCustomSourceError('Enter a valid HTTP or HTTPS URL.'); return; }
     const current = form.customSearchSources || [];
     if (current.length >= 20) { setCustomSourceError('You can save up to 20 custom sources.'); return; }
     if (current.some((source) => source.url === url)) { setCustomSourceError('That source is already saved.'); return; }
     const source = { id: customSearchSourceId(url), label: customSourceDraft.label.trim() || new URL(url).hostname, url, description: customSourceDraft.description.trim() || 'Custom job-search source', domains: [new URL(url).hostname], custom: true };
-    setForm((currentForm) => ({ ...currentForm, customSearchSources: [...(currentForm.customSearchSources || []), source], searchSources: [...new Set([...(currentForm.searchSources || DEFAULT_SEARCH_SOURCES), source.id])] }));
+    const nextForm = { ...form, customSearchSources: [...current, source], searchSources: [...new Set([...(form.searchSources || DEFAULT_SEARCH_SOURCES), source.id])] };
+    setForm(nextForm);
     setCustomSourceDraft({ label: '', url: '', description: '' });
-    setCustomSourceError(''); setSaved(false);
+    setCustomSourceError('');
+    await persistSettings(nextForm);
   }
 
-  function removeCustomSearchSource(sourceId) {
-    setForm((current) => ({ ...current, customSearchSources: (current.customSearchSources || []).filter((source) => source.id !== sourceId), searchSources: (current.searchSources || []).filter((id) => id !== sourceId) }));
-    setSaved(false);
+  async function removeCustomSearchSource(sourceId) {
+    const nextForm = { ...form, customSearchSources: (form.customSearchSources || []).filter((source) => source.id !== sourceId), searchSources: (form.searchSources || []).filter((id) => id !== sourceId) };
+    setForm(nextForm);
+    await persistSettings(nextForm);
   }
 
   return (
@@ -1503,9 +1510,10 @@ function SettingsPage({ settings, setSettings }) {
           </div>
           <div className="custom-default-sources">
             <div className="source-selector-heading"><span className="field-label">ADD ACCOUNT SOURCE</span><strong>{(form.customSearchSources || []).length} OF 20</strong></div>
-            <div className="custom-source-form"><input value={customSourceDraft.label} onChange={(event) => setCustomSourceDraft({ ...customSourceDraft, label: event.target.value })} placeholder="Source name" maxLength={100} /><input value={customSourceDraft.url} onChange={(event) => { setCustomSourceDraft({ ...customSourceDraft, url: event.target.value }); setCustomSourceError(''); }} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); addCustomSearchSource(); } }} placeholder="jobs.example.com or careers URL" /><input value={customSourceDraft.description} onChange={(event) => setCustomSourceDraft({ ...customSourceDraft, description: event.target.value })} placeholder="Short description (optional)" maxLength={200} /><button type="button" className="button secondary compact" onClick={addCustomSearchSource} disabled={!customSourceDraft.url.trim() || (form.customSearchSources || []).length >= 20}><Plus size={15} /> Add source</button></div>
+            <small className="field-help custom-source-save-help">Adding or removing a source saves it to your account immediately.</small>
+            <div className="custom-source-form"><input value={customSourceDraft.label} onChange={(event) => setCustomSourceDraft({ ...customSourceDraft, label: event.target.value })} placeholder="Source name" maxLength={100} /><input value={customSourceDraft.url} onChange={(event) => { setCustomSourceDraft({ ...customSourceDraft, url: event.target.value }); setCustomSourceError(''); }} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); addCustomSearchSource(); } }} placeholder="jobs.example.com or careers URL" /><input value={customSourceDraft.description} onChange={(event) => setCustomSourceDraft({ ...customSourceDraft, description: event.target.value })} placeholder="Short description (optional)" maxLength={200} /><button type="button" className="button secondary compact" onClick={addCustomSearchSource} disabled={saving || !customSourceDraft.url.trim() || (form.customSearchSources || []).length >= 20}><Plus size={15} /> Add source</button></div>
             {customSourceError && <small className="custom-site-error">{customSourceError}</small>}
-            {(form.customSearchSources || []).length > 0 && <div className="custom-source-list">{form.customSearchSources.map((source) => { const checked = (form.searchSources || []).includes(source.id); return <div className={`custom-source-row ${checked ? 'selected' : ''}`} key={source.id}><label><input type="checkbox" checked={checked} onChange={() => toggleSource(source.id)} /><span className="source-check">{checked && <Check size={14} />}</span><span><strong>{source.label}</strong><small>{source.description} · {source.url}</small></span></label><button type="button" onClick={() => removeCustomSearchSource(source.id)} aria-label={`Remove ${source.label}`}><X size={14} /></button></div>; })}</div>}
+            {(form.customSearchSources || []).length > 0 && <div className="custom-source-list">{form.customSearchSources.map((source) => { const checked = (form.searchSources || []).includes(source.id); return <div className={`custom-source-row ${checked ? 'selected' : ''}`} key={source.id}><label><input type="checkbox" checked={checked} onChange={() => toggleSource(source.id)} /><span className="source-check">{checked && <Check size={14} />}</span><span><strong>{source.label}</strong><small>{source.description} · {source.url}</small></span></label><button type="button" onClick={() => removeCustomSearchSource(source.id)} disabled={saving} aria-label={`Remove ${source.label}`}><X size={14} /></button></div>; })}</div>}
           </div>
           {!(form.searchSources || []).length && <div className="source-warning"><X size={15} /> Select at least one search source before saving.</div>}
 

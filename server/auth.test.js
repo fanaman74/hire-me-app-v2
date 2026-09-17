@@ -44,6 +44,15 @@ test('local accounts receive isolated sessions and scoped data', async () => {
     assert.equal(saveSettings.body.searchCountry, 'Belgium');
     assert.equal(saveSettings.body.customSearchSources.length, 1);
 
+    const signOut = await jsonRequest(baseUrl, '/api/auth/logout', { method: 'POST', headers: { cookie: firstCookie } });
+    assert.equal(signOut.response.status, 200);
+    const signBackIn = await jsonRequest(baseUrl, '/api/auth/login', { method: 'POST', body: JSON.stringify({ email: 'first@example.com', password: 'first-password' }) });
+    assert.equal(signBackIn.response.status, 200);
+    const restoredSettings = await jsonRequest(baseUrl, '/api/settings', { headers: { cookie: signBackIn.response.headers.get('set-cookie').split(';')[0] } });
+    assert.equal(restoredSettings.response.status, 200);
+    assert.equal(restoredSettings.body.searchCountry, 'Belgium');
+    assert.equal(restoredSettings.body.customSearchSources.length, 1);
+
     const second = await jsonRequest(baseUrl, '/api/auth/register', { method: 'POST', body: JSON.stringify({ email: 'second@example.com', password: 'second-password' }) });
     assert.equal(second.response.status, 201);
     assert.equal(second.body.user.role, 'user');

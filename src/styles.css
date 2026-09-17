@@ -388,6 +388,7 @@ code { color: var(--signal); font-family: inherit; }
 .source-warning { margin-top: 10px; display: flex; align-items: center; gap: 8px; padding: 10px; color: #ff8a83; background: #1a0b09; border: 1px solid #63201b; font-size: 8px; }
 .country-filter-field { margin: 16px 0 18px; }
 .custom-default-sources { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--line); }
+.custom-source-save-help { display: block; margin: -3px 0 10px; }
 .custom-source-form { display: grid; grid-template-columns: 1fr 1.35fr 1.2fr auto; gap: 8px; align-items: center; }
 .custom-source-form input { min-height: 40px; }
 .custom-source-list { margin-top: 10px; border-top: 1px solid var(--line); border-left: 1px solid var(--line); }
