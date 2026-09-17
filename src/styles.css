@@ -386,6 +386,19 @@ code { color: var(--signal); font-family: inherit; }
 .source-selector label small { margin-top: 5px; color: var(--muted); font-size: 7px; }
 .source-selector label code { color: #5f6659; font-size: 7px; }
 .source-warning { margin-top: 10px; display: flex; align-items: center; gap: 8px; padding: 10px; color: #ff8a83; background: #1a0b09; border: 1px solid #63201b; font-size: 8px; }
+.country-filter-field { margin: 16px 0 18px; }
+.custom-default-sources { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--line); }
+.custom-source-form { display: grid; grid-template-columns: 1fr 1.35fr 1.2fr auto; gap: 8px; align-items: center; }
+.custom-source-form input { min-height: 40px; }
+.custom-source-list { margin-top: 10px; border-top: 1px solid var(--line); border-left: 1px solid var(--line); }
+.custom-source-row { min-height: 58px; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 7px 9px 7px 12px; background: #070806; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.custom-source-row.selected { background: #10170b; }
+.custom-source-row label { min-width: 0; display: grid; grid-template-columns: 25px minmax(0, 1fr); align-items: center; gap: 10px; cursor: pointer; }
+.custom-source-row label > span:last-child { min-width: 0; }
+.custom-source-row input { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+.custom-source-row strong, .custom-source-row small { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.custom-source-row strong { color: var(--soft); font-size: 9px; font-weight: 500; }.custom-source-row small { margin-top: 4px; color: var(--muted); font-size: 7px; }
+.custom-source-row > button { width: 28px; height: 28px; display: grid; place-items: center; flex: 0 0 auto; color: var(--muted); background: transparent; border: 1px solid var(--line); cursor: pointer; }.custom-source-row > button:hover { color: var(--danger); border-color: var(--danger); }
 .candidate-sites-editor { margin-top: 16px; padding-top: 15px; border-top: 1px solid var(--line); }
 .custom-site-entry { min-height: 48px; display: grid; grid-template-columns: 23px minmax(0, 1fr) auto; align-items: center; gap: 9px; padding: 6px 7px 6px 12px; color: var(--signal); background: #050604; border: 1px solid var(--line-bright); }
 .custom-site-entry input { min-height: 34px; padding: 0; border: 0; background: transparent; }
@@ -440,6 +453,8 @@ input[type='range']::-webkit-slider-thumb { appearance: none; width: 13px; heigh
 @media (max-width: 620px) {
   .source-selector { grid-template-columns: 1fr; }
   .source-selector label code { display: none; }
+  .custom-source-form { grid-template-columns: 1fr; }
+  .custom-source-form .button { width: 100%; }
   .found-role-facts { grid-template-columns: 1fr 1fr; }
 }
 

@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { customSearchSourceId } from '../shared/search-sources.js';
 
 process.env.NODE_ENV = 'test';
 delete process.env.GOOGLE_CLIENT_ID;
@@ -37,9 +38,11 @@ test('local accounts receive isolated sessions and scoped data', async () => {
 
     const saveProfile = await jsonRequest(baseUrl, '/api/profiles', { method: 'PUT', headers: { cookie: firstCookie }, body: JSON.stringify({ candidates: [{ id: 'first-profile', name: 'First', resumeText: 'private CV' }], activeCandidateId: 'first-profile' }) });
     assert.equal(saveProfile.response.status, 200);
-    const saveSettings = await jsonRequest(baseUrl, '/api/settings', { method: 'PUT', headers: { cookie: firstCookie }, body: JSON.stringify({ model: 'openai/gpt-4.1-mini', temperature: 0.3, maxTokens: 4096, searchSources: ['remoteok'], apiKey: 'first-secret' }) });
+    const saveSettings = await jsonRequest(baseUrl, '/api/settings', { method: 'PUT', headers: { cookie: firstCookie }, body: JSON.stringify({ model: 'openai/gpt-4.1-mini', temperature: 0.3, maxTokens: 4096, searchSources: ['remoteok', customSearchSourceId('https://example.com/careers')], searchCountry: 'Belgium', customSearchSources: [{ label: 'Example Careers', url: 'example.com/careers', description: 'Employer vacancies' }], apiKey: 'first-secret' }) });
     assert.equal(saveSettings.response.status, 200);
     assert.equal(saveSettings.body.apiKey, undefined);
+    assert.equal(saveSettings.body.searchCountry, 'Belgium');
+    assert.equal(saveSettings.body.customSearchSources.length, 1);
 
     const second = await jsonRequest(baseUrl, '/api/auth/register', { method: 'POST', body: JSON.stringify({ email: 'second@example.com', password: 'second-password' }) });
     assert.equal(second.response.status, 201);

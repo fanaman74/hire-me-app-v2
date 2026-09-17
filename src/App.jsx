@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { DEFAULT_SEARCH_SOURCES, SEARCH_SOURCES } from '../shared/search-sources.js';
+import { customSearchSourceId, DEFAULT_SEARCH_SOURCES, SEARCH_SOURCES } from '../shared/search-sources.js';
 import { canonicalJobUrl, extractJobLeads } from '../shared/jobs.js';
 import { nextWorkflowFor } from '../shared/workflow-navigation.js';
 import {
@@ -333,7 +333,7 @@ function workflowOutputText(value) {
 function WorkspaceApp({ user, onLogout, notice = '' }) {
   const [page, setPage] = useState('overview');
   const [mobileNav, setMobileNav] = useState(false);
-  const [settings, setSettings] = useState({ provider: 'openrouter', model: DEFAULT_MODEL, temperature: 0.3, maxTokens: 4096, searchSources: DEFAULT_SEARCH_SOURCES, providerKeys: {}, apiKeyConfigured: false });
+  const [settings, setSettings] = useState({ provider: 'openrouter', model: DEFAULT_MODEL, temperature: 0.3, maxTokens: 4096, searchSources: DEFAULT_SEARCH_SOURCES, searchCountry: '', customSearchSources: [], providerKeys: {}, apiKeyConfigured: false });
   const [settingsLoading, setSettingsLoading] = useState(true);
   const [profileStorageError, setProfileStorageError] = useState('');
   const storageScope = user.id;
@@ -793,7 +793,10 @@ function WorkflowStudio({ settings, activeCandidate, onWorkflowComplete, onUpdat
   const [completionNotice, setCompletionNotice] = useState(null);
   const completionTimer = useRef(null);
   const runController = useRef(null);
-  const activeSearchSources = SEARCH_SOURCES.filter((source) => (settings.searchSources || DEFAULT_SEARCH_SOURCES).includes(source.id));
+  const activeSearchSources = [
+    ...SEARCH_SOURCES,
+    ...(settings.customSearchSources || []),
+  ].filter((source) => (settings.searchSources || DEFAULT_SEARCH_SOURCES).includes(source.id));
   const savedProfileOutput = activeCandidate?.workflowOutputs?.['setup-candidate'] || '';
   const savedSearchConfig = activeCandidate?.workflowOutputs?.['build-search-config'] || '';
   const profileReady = Boolean(activeCandidate?.resumeText);
@@ -1093,7 +1096,7 @@ function WorkflowStudio({ settings, activeCandidate, onWorkflowComplete, onUpdat
               <div className="active-sources">
               <div className="active-sources-heading"><span><Globe2 size={16} /><strong>Search sources</strong></span><button type="button" onClick={onOpenSettings}>Configure <ArrowRight size={14} /></button></div>
               <div className="active-source-list">{activeSearchSources.map((source) => <span key={source.id}>{source.label}</span>)}</div>
-              <small>Default sources come from Settings. Custom sites below are saved only with the active profile. Step 3 searches both sets.</small>
+              <small>Account-saved default sources come from Settings. Custom sites below are saved only with the active profile. Step 3 searches both sets.</small>
               <div className="candidate-sites-editor">
                 <div className="source-selector-heading"><span className="field-label">{activeCandidate ? `${activeCandidate.name.toUpperCase()} — CUSTOM SITES` : 'CUSTOM SITES'}</span><strong>{(activeCandidate?.customSearchSites || []).length} OF 20</strong></div>
                 {activeCandidate ? <><div className="custom-site-entry"><Link2 size={16} /><input value={customSiteDraft} onChange={(event) => { setCustomSiteDraft(event.target.value); setCustomSiteError(''); }} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); addCandidateSearchSite(); } }} placeholder="jobs.example.com or a careers-page URL" /><button type="button" className="button secondary compact" onClick={addCandidateSearchSite} disabled={!customSiteDraft.trim() || (activeCandidate.customSearchSites || []).length >= 20}><Plus size={15} /> Add site</button></div>{customSiteError && <small className="custom-site-error">{customSiteError}</small>}{(activeCandidate.customSearchSites || []).length > 0 ? <div className="custom-site-list">{activeCandidate.customSearchSites.map((site) => <div key={site}><span><Globe2 size={14} /><strong>{site.replace(/^https?:\/\//, '')}</strong></span><button type="button" onClick={() => removeCandidateSearchSite(site)} aria-label={`Remove ${site} from ${activeCandidate.name}`}><X size={14} /></button></div>)}</div> : <div className="candidate-sites-empty">No custom sites added for this profile.</div>}</> : <button type="button" className="candidate-sites-empty action" onClick={onOpenCandidates}>Choose a profile to add custom search sites <ArrowRight size={14} /></button>}
@@ -1317,6 +1320,17 @@ const PROVIDER_OPTIONS = [
   { id: 'gemini', label: 'Gemini', help: 'Direct Google AI API access. Web tools are OpenRouter-only.', env: 'GEMINI_API_KEY', placeholder: 'AIza…', defaultModel: 'gemini-2.5-flash' },
 ];
 
+function normalizeSettingsSourceUrl(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return null;
+  try {
+    const url = new URL(/^https?:\/\//i.test(raw) ? raw : `https://${raw}`);
+    if (!['http:', 'https:'].includes(url.protocol) || !url.hostname.includes('.') || url.username || url.password) return null;
+    url.hash = '';
+    return url.toString().replace(/\/$/, '');
+  } catch { return null; }
+}
+
 function SettingsPage({ settings, setSettings }) {
   const [models, setModels] = useState([]);
   const [modelsLoading, setModelsLoading] = useState(true);
@@ -1329,6 +1343,8 @@ function SettingsPage({ settings, setSettings }) {
   const [testing, setTesting] = useState(false);
   const [testStatus, setTestStatus] = useState(null);
   const [error, setError] = useState('');
+  const [customSourceDraft, setCustomSourceDraft] = useState({ label: '', url: '', description: '' });
+  const [customSourceError, setCustomSourceError] = useState('');
   const provider = PROVIDER_OPTIONS.find((entry) => entry.id === form.provider) || PROVIDER_OPTIONS[0];
   const keyStatus = settings.providerKeys?.[provider.id] || { configured: settings.apiKeyConfigured, source: settings.apiKeySource };
 
@@ -1366,7 +1382,7 @@ function SettingsPage({ settings, setSettings }) {
       const next = await api('/api/settings', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ provider: form.provider, model: form.model, temperature: Number(form.temperature), maxTokens: Number(form.maxTokens), searchSources: form.searchSources || DEFAULT_SEARCH_SOURCES, apiKey: form.apiKey }),
+        body: JSON.stringify({ provider: form.provider, model: form.model, temperature: Number(form.temperature), maxTokens: Number(form.maxTokens), searchSources: form.searchSources || DEFAULT_SEARCH_SOURCES, searchCountry: form.searchCountry || '', customSearchSources: form.customSearchSources || [], apiKey: form.apiKey }),
       });
       setSettings(next);
       setForm((current) => ({ ...current, ...next, apiKey: '' }));
@@ -1398,6 +1414,23 @@ function SettingsPage({ settings, setSettings }) {
         : [...selected, sourceId];
       return { ...current, searchSources };
     });
+    setSaved(false);
+  }
+
+  function addCustomSearchSource() {
+    const url = normalizeSettingsSourceUrl(customSourceDraft.url);
+    if (!url) { setCustomSourceError('Enter a valid HTTP or HTTPS URL.'); return; }
+    const current = form.customSearchSources || [];
+    if (current.length >= 20) { setCustomSourceError('You can save up to 20 custom sources.'); return; }
+    if (current.some((source) => source.url === url)) { setCustomSourceError('That source is already saved.'); return; }
+    const source = { id: customSearchSourceId(url), label: customSourceDraft.label.trim() || new URL(url).hostname, url, description: customSourceDraft.description.trim() || 'Custom job-search source', domains: [new URL(url).hostname], custom: true };
+    setForm((currentForm) => ({ ...currentForm, customSearchSources: [...(currentForm.customSearchSources || []), source], searchSources: [...new Set([...(currentForm.searchSources || DEFAULT_SEARCH_SOURCES), source.id])] }));
+    setCustomSourceDraft({ label: '', url: '', description: '' });
+    setCustomSourceError(''); setSaved(false);
+  }
+
+  function removeCustomSearchSource(sourceId) {
+    setForm((current) => ({ ...current, customSearchSources: (current.customSearchSources || []).filter((source) => source.id !== sourceId), searchSources: (current.searchSources || []).filter((id) => id !== sourceId) }));
     setSaved(false);
   }
 
@@ -1452,8 +1485,9 @@ function SettingsPage({ settings, setSettings }) {
           </div>
 
           <div className="rule" />
-          <div className="settings-section-heading"><div className="setting-icon"><Globe2 size={19} /></div><div><h2>Default job-search sources</h2><p>Choose the shared sources used when Step 3 starts a job search. Profile-specific sites are managed in Step 3.</p></div></div>
-          <div className="source-selector-heading"><span className="field-label">ENABLED SOURCES</span><strong>{(form.searchSources || DEFAULT_SEARCH_SOURCES).length} OF {SEARCH_SOURCES.length}</strong></div>
+          <div className="settings-section-heading"><div className="setting-icon"><Globe2 size={19} /></div><div><h2>Default job-search sources</h2><p>Choose account-saved sources used whenever Step 3 starts a job search. Profile-specific sites are managed separately in Step 3.</p></div></div>
+          <div className="field-group country-filter-field"><label className="field-label" htmlFor="search-country">COUNTRY FILTER <strong>OPTIONAL</strong></label><input id="search-country" value={form.searchCountry || ''} onChange={(event) => { setForm({ ...form, searchCountry: event.target.value }); setSaved(false); }} placeholder="e.g. Belgium, United Kingdom, or Germany" maxLength={120} /><small className="field-help">Only roles in this country, or remote roles that explicitly accept candidates there, will be included.</small></div>
+          <div className="source-selector-heading"><span className="field-label">ENABLED SOURCES</span><strong>{(form.searchSources || DEFAULT_SEARCH_SOURCES).length} OF {SEARCH_SOURCES.length + (form.customSearchSources || []).length}</strong></div>
           <div className="source-selector">
             {SEARCH_SOURCES.map((source) => {
               const checked = (form.searchSources || DEFAULT_SEARCH_SOURCES).includes(source.id);
@@ -1467,7 +1501,13 @@ function SettingsPage({ settings, setSettings }) {
               );
             })}
           </div>
-          {!(form.searchSources || []).length && <div className="source-warning"><X size={15} /> Select at least one built-in source before saving.</div>}
+          <div className="custom-default-sources">
+            <div className="source-selector-heading"><span className="field-label">ADD ACCOUNT SOURCE</span><strong>{(form.customSearchSources || []).length} OF 20</strong></div>
+            <div className="custom-source-form"><input value={customSourceDraft.label} onChange={(event) => setCustomSourceDraft({ ...customSourceDraft, label: event.target.value })} placeholder="Source name" maxLength={100} /><input value={customSourceDraft.url} onChange={(event) => { setCustomSourceDraft({ ...customSourceDraft, url: event.target.value }); setCustomSourceError(''); }} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); addCustomSearchSource(); } }} placeholder="jobs.example.com or careers URL" /><input value={customSourceDraft.description} onChange={(event) => setCustomSourceDraft({ ...customSourceDraft, description: event.target.value })} placeholder="Short description (optional)" maxLength={200} /><button type="button" className="button secondary compact" onClick={addCustomSearchSource} disabled={!customSourceDraft.url.trim() || (form.customSearchSources || []).length >= 20}><Plus size={15} /> Add source</button></div>
+            {customSourceError && <small className="custom-site-error">{customSourceError}</small>}
+            {(form.customSearchSources || []).length > 0 && <div className="custom-source-list">{form.customSearchSources.map((source) => { const checked = (form.searchSources || []).includes(source.id); return <div className={`custom-source-row ${checked ? 'selected' : ''}`} key={source.id}><label><input type="checkbox" checked={checked} onChange={() => toggleSource(source.id)} /><span className="source-check">{checked && <Check size={14} />}</span><span><strong>{source.label}</strong><small>{source.description} · {source.url}</small></span></label><button type="button" onClick={() => removeCustomSearchSource(source.id)} aria-label={`Remove ${source.label}`}><X size={14} /></button></div>; })}</div>}
+          </div>
+          {!(form.searchSources || []).length && <div className="source-warning"><X size={15} /> Select at least one search source before saving.</div>}
 
           <div className="rule" />
           <div className="settings-section-heading"><div className="setting-icon"><SlidersHorizontal size={19} /></div><div><h2>Generation controls</h2><p>Lower temperature gives job-search artifacts more consistent structure.</p></div></div>
@@ -1482,7 +1522,7 @@ function SettingsPage({ settings, setSettings }) {
 
         <aside className="settings-aside">
           <div className="panel active-model-card"><span className="eyebrow">ACTIVE PROVIDER / MODEL</span><div className="active-model-mark"><Sparkles size={22} /></div><h3>{selectedModel?.name || form.model}</h3><code>{provider.label} · {form.model}</code><p>This selection will apply to setup, search, tailoring, tracking, and interview preparation.</p><div className="live-line"><span className="model-pulse" /> {keyStatus.configured ? 'READY' : 'API KEY REQUIRED'}</div></div>
-          <div className="privacy-card"><ShieldCheck size={18} /><div><strong>LOCAL SETTINGS</strong><p>Saved in <code>.data/settings.json</code>, which is excluded from Git.</p></div></div>
+          <div className="privacy-card"><ShieldCheck size={18} /><div><strong>PRIVATE ACCOUNT SETTINGS</strong><p>Saved in your account’s private data directory, which is excluded from Git.</p></div></div>
         </aside>
       </form>
     </>

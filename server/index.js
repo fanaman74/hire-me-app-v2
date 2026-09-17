@@ -10,7 +10,7 @@ import http from 'node:http';
 import https from 'node:https';
 import pdfParse from 'pdf-parse/lib/pdf-parse.js';
 import { fileURLToPath } from 'node:url';
-import { createSettingsStore, PROVIDERS, modelsForProvider, normalizeProvider } from './settings.js';
+import { createSettingsStore, PROVIDERS, modelsForProvider, normalizeProvider, normalizeCustomSearchSources, MAX_CUSTOM_SEARCH_SOURCES } from './settings.js';
 import { createProfileStore } from './profiles.js';
 import { createAuthStore } from './auth.js';
 import { SEARCH_SOURCES, SEARCH_SOURCE_IDS } from '../shared/search-sources.js';
@@ -462,15 +462,23 @@ app.put('/api/settings', async (req, res) => {
   const temperature = Number(req.body.temperature);
   const maxTokens = Number(req.body.maxTokens);
   const searchSources = Array.isArray(req.body.searchSources) ? [...new Set(req.body.searchSources.map(String))] : [];
+  const customSourcesProvided = req.body.customSearchSources !== undefined;
+  const customSearchSources = customSourcesProvided ? normalizeCustomSearchSources(req.body.customSearchSources, { strict: true }) : null;
+  const searchCountry = String(req.body.searchCountry || '').trim();
   const validDirectModel = modelsForProvider(provider).some((entry) => entry.id === model);
   if (provider === 'openrouter' ? !/^[a-z0-9._-]+\/[a-z0-9._:@/-]+$/i.test(model) : !validDirectModel) {
     return res.status(400).json({ error: { message: `Choose a valid ${PROVIDERS[provider].label} model.` } });
   }
   if (!Number.isFinite(temperature) || temperature < 0 || temperature > 2) return res.status(400).json({ error: { message: 'Temperature must be between 0 and 2.' } });
   if (!Number.isInteger(maxTokens) || maxTokens < 128 || maxTokens > 32768) return res.status(400).json({ error: { message: 'Max output tokens must be between 128 and 32768.' } });
-  if (!searchSources.length || searchSources.some((source) => !SEARCH_SOURCE_IDS.has(source))) return res.status(400).json({ error: { message: 'Select at least one valid built-in search source.' } });
+  if (customSourcesProvided && !customSearchSources) return res.status(400).json({ error: { message: `Custom search sources must be valid HTTP or HTTPS URLs, with a maximum of ${MAX_CUSTOM_SEARCH_SOURCES} entries.` } });
+  if (searchCountry.length > 120) return res.status(400).json({ error: { message: 'Country filter must be 120 characters or fewer.' } });
   try {
-    res.json(await store.update({ provider, model, temperature, maxTokens, searchSources, apiKey: req.body.apiKey, clearApiKey: req.body.clearApiKey }, { userId: req.user.id }));
+    const existing = await store.get({ userId: req.user.id });
+    const effectiveCustomSources = customSourcesProvided ? customSearchSources : existing.customSearchSources;
+    const validSourceIds = new Set([...SEARCH_SOURCE_IDS, ...effectiveCustomSources.map((source) => source.id)]);
+    if (!searchSources.length || searchSources.some((source) => !validSourceIds.has(source))) return res.status(400).json({ error: { message: 'Select at least one valid search source.' } });
+    res.json(await store.update({ provider, model, temperature, maxTokens, searchSources, searchCountry, customSearchSources: effectiveCustomSources, apiKey: req.body.apiKey, clearApiKey: req.body.clearApiKey }, { userId: req.user.id }));
   } catch (error) {
     const result = apiError(error, 'Could not save settings');
     res.status(result.status).json(result.body);
@@ -628,8 +636,15 @@ app.post('/api/run-command', async (req, res) => {
     }
     const commandPrompt = await fs.readFile(path.join(rootDir, '.claude', 'commands', `${command}.md`), 'utf8');
     let prompt = commandPrompt;
-    const configuredSources = SEARCH_SOURCES.filter((source) => settings.searchSources.includes(source.id));
-    const sourceList = configuredSources.map((source) => `${source.label} (${source.id})`).join(', ');
+    const customDefaultSources = settings.customSearchSources || [];
+    const configuredSources = [
+      ...SEARCH_SOURCES.filter((source) => settings.searchSources.includes(source.id)),
+      ...customDefaultSources.filter((source) => settings.searchSources.includes(source.id)),
+    ];
+    const sourceList = configuredSources.map((source) => `${source.label} (${source.id})${source.url ? ` — ${source.url}` : ''}`).join(', ');
+    const countryRule = settings.searchCountry
+      ? `COUNTRY FILTER — AUTHORITATIVE: Only include roles located in ${settings.searchCountry}, or explicitly remote roles that clearly accept candidates located in ${settings.searchCountry}. Exclude roles restricted to other countries. If location eligibility is unclear, exclude the role.`
+      : 'COUNTRY FILTER: No account-level country restriction is set. Use the candidate profile location and search configuration as additional context.';
     const customSiteList = candidateSites.length ? candidateSites.join(', ') : 'none';
     let customResults = [];
     let sourceResults = [];
@@ -654,12 +669,14 @@ app.post('/api/run-command', async (req, res) => {
       customResults = candidateSites.length
         ? await mapWithConcurrency(candidateSites, 4, (site) => fetchCustomSite(site, { signal: requestController.signal }), requestController.signal)
         : [];
+      const defaultSourceResults = await mapWithConcurrency(customDefaultSources.filter((source) => settings.searchSources.includes(source.id)), 4, (source) => fetchCustomSite(source.url, { signal: requestController.signal }), requestController.signal);
       const customEvidence = customResults.map((result) => `SOURCE: ${result.url}\nSTATUS: ${result.status || 'unreachable'}\nLIKELY JOB LINKS: ${(result.jobLinks || []).join(', ') || '(none detected)'}\nPAGE CONTENT: ${result.text || '(no readable content)'}`).join('\n\n');
-      sourceResults = customResults.map((result) => ({ name: result.url, status: result.ok ? 'fetch-ok' : 'fetch-failed', ...(result.ok ? {} : { error: result.text }) }));
+      const defaultSourceEvidence = defaultSourceResults.map((result) => `SOURCE: ${configuredSources.find((source) => source.url === result.url)?.label || result.url}\nURL: ${result.url}\nSTATUS: ${result.status || 'unreachable'}\nLIKELY JOB LINKS: ${(result.jobLinks || []).join(', ') || '(none detected)'}\nPAGE CONTENT: ${result.text || '(no readable content)'}`).join('\n\n');
+      sourceResults = [...defaultSourceResults, ...customResults].map((result) => ({ name: result.url, status: result.ok ? 'fetch-ok' : 'fetch-failed', ...(result.ok ? {} : { error: result.text }) }));
       const salaryRule = salaryExpectationEur === null
         ? 'SALARY RULE: No profile override is set. Use the salary default from the saved search configuration.'
         : `SALARY OVERRIDE — AUTHORITATIVE: Use a minimum annual gross salary of €${Math.round(salaryExpectationEur).toLocaleString('en-IE')} EUR. Ignore and replace every other salary amount or currency found in the saved CV, prior analysis, or search configuration. Do not apply an old USD salary threshold.`;
-      userInput = `${salaryRule}\n\nRun the job search using only these configured sources: ${sourceList}. Also search each custom site directly: ${customSiteList}. For every custom domain, use web search with a domain-restricted query for the target roles and use web fetch on likely vacancy links. Do not count a homepage, stylesheet, favicon, or navigation link as a job. Link every reported job and include a sources-searched summary showing each configured source and custom site.\n\nThe server fetched the following custom-site pages just before this request. Treat them as evidence, extract relevant current listings when present, and mark any unreachable source as not searched successfully:\n${customEvidence || '(no custom sites configured)'}\n\n${input}`;
+      userInput = `${salaryRule}\n\n${countryRule}\n\nRun the job search using only these configured sources: ${sourceList}. Also search each profile-specific custom site directly: ${customSiteList}. For every custom domain, use web search with a domain-restricted query for the target roles and use web fetch on likely vacancy links. Do not count a homepage, stylesheet, favicon, or navigation link as a job. Link every reported job and include a sources-searched summary showing each configured source and custom site.\n\nThe server fetched the following saved default custom-source pages just before this request. Treat them as evidence, extract relevant current listings when present, and mark any unreachable source as not searched successfully:\n${defaultSourceEvidence || '(no saved custom sources configured)'}\n\nThe server fetched the following profile-specific custom-site pages just before this request. Treat them as evidence, extract relevant current listings when present, and mark any unreachable source as not searched successfully:\n${customEvidence || '(no profile-specific custom sites configured)'}\n\n${input}`;
     }
     let payload;
     let content;
@@ -668,7 +685,7 @@ app.post('/api/run-command', async (req, res) => {
       const checkedOn = new Date().toISOString().slice(0, 10);
       const sourcePlans = configuredSources.map((source) => ({
         name: source.label,
-        instruction: `Search only ${source.label} (${source.id}). Use web search with a site restriction, then web fetch the most relevant individual job pages. Follow the source-specific strategy from the command instructions when applicable.`,
+        instruction: `Search only ${source.label} (${source.id})${source.url ? ` at ${source.url}` : ''}. Use web search with a site restriction, then web fetch the most relevant individual job pages. Follow the source-specific strategy from the command instructions when applicable.`,
       }));
       candidateSites.forEach((site) => sourcePlans.push({
         name: site,
@@ -685,7 +702,7 @@ app.post('/api/run-command', async (req, res) => {
             max_tokens: Math.min(settings.maxTokens, 4096),
             tools: [{ type: 'openrouter:web_search' }, { type: 'openrouter:web_fetch' }],
             messages: [
-              { role: 'system', content: `${prompt}\n\nToday is ${checkedOn}. You are one focused search agent in a parallel job-search run. Open every individual vacancy with web fetch immediately before reporting it. Exclude search-result snippets, inaccessible pages, expired deadlines, closed/filled roles, talent pools, and pages that no longer accept applications. Return only verified active job leads. Use exactly this structure for every role:\n### [Role title — Company](direct job-posting URL)\n- Posted: YYYY-MM-DD, exact displayed date, or Not stated\n- Closing: YYYY-MM-DD, Open until filled, or Not stated\n- Checked: ${checkedOn}\n- Status: Active\n- Location: city/country or Remote\n- Work mode: Remote, Hybrid, On-site, or Not stated\n- Compensation: exact advertised salary/range and currency, or Not stated\n- Source: job board or employer\n- Evidence: concise summary of responsibilities and the strongest matching requirements from the live posting\nNever report a role without a direct clickable URL and live-page verification. Do not invent dates, compensation, or listings.` },
+              { role: 'system', content: `${prompt}\n\n${countryRule}\n\nToday is ${checkedOn}. You are one focused search agent in a parallel job-search run. Open every individual vacancy with web fetch immediately before reporting it. Exclude search-result snippets, inaccessible pages, expired deadlines, closed/filled roles, talent pools, and pages that no longer accept applications. Return only verified active job leads. Use exactly this structure for every role:\n### [Role title — Company](direct job-posting URL)\n- Posted: YYYY-MM-DD, exact displayed date, or Not stated\n- Closing: YYYY-MM-DD, Open until filled, or Not stated\n- Checked: ${checkedOn}\n- Status: Active\n- Location: city/country or Remote\n- Work mode: Remote, Hybrid, On-site, or Not stated\n- Compensation: exact advertised salary/range and currency, or Not stated\n- Source: job board or employer\n- Evidence: concise summary of responsibilities and the strongest matching requirements from the live posting\nNever report a role without a direct clickable URL and live-page verification. Do not invent dates, compensation, or listings.` },
               { role: 'user', content: `${plan.instruction}\n\nCandidate and search context:\n${userInput}` },
             ],
           }),
@@ -704,7 +721,7 @@ app.post('/api/run-command', async (req, res) => {
         const links = (result.jobLinks || []).slice(0, 12).map((link) => `- ${link}`).join('\n');
         return `### ${result.url}\n- Fetch status: ${result.ok ? `HTTP ${result.status} (read successfully)` : (result.text || 'unreachable')}\n${links || '- No likely vacancy links detected in the initial page.'}`;
       }).join('\n\n');
-      const synthesisInput = `Today is ${checkedOn}. You are the lead coordinator. Merge these parallel search-agent results into one accurate job-search report for the candidate. Deduplicate by URL or company plus title. Include a role only when its agent opened the direct posting and explicitly confirmed it active on ${checkedOn}. Exclude expired, closed, filled, inaccessible, snippet-only, and unverified roles. Preserve this exact structure for every included role:\n### [Role title — Company](direct job-posting URL)\n- Posted: YYYY-MM-DD, exact displayed date, or Not stated\n- Closing: YYYY-MM-DD, Open until filled, or Not stated\n- Checked: ${checkedOn}\n- Status: Active\n- Location: city/country or Remote\n- Work mode: Remote, Hybrid, On-site, or Not stated\n- Compensation: exact advertised salary/range and currency, or Not stated\n- Source: job board or employer\n- Evidence: concise summary of responsibilities and strongest matching requirements from the live posting\nDo not infer or invent posting dates or compensation. Include totals, qualified leads, excluded stale/unverified results, inaccessible sources, and a source summary. Do not claim a source was searched unless the corresponding agent reported it.\n\n${agentResults.join('\n\n')}\n\n## CONSOLE CUSTOM-SITE FETCH CHECK\n${verified || '- No custom sites configured.'}`;
+      const synthesisInput = `Today is ${checkedOn}. ${countryRule} You are the lead coordinator. Merge these parallel search-agent results into one accurate job-search report for the candidate. Deduplicate by URL or company plus title. Include a role only when its agent opened the direct posting and explicitly confirmed it active on ${checkedOn}. Exclude expired, closed, filled, inaccessible, snippet-only, and unverified roles. Preserve this exact structure for every included role:\n### [Role title — Company](direct job-posting URL)\n- Posted: YYYY-MM-DD, exact displayed date, or Not stated\n- Closing: YYYY-MM-DD, Open until filled, or Not stated\n- Checked: ${checkedOn}\n- Status: Active\n- Location: city/country or Remote\n- Work mode: Remote, Hybrid, On-site, or Not stated\n- Compensation: exact advertised salary/range and currency, or Not stated\n- Source: job board or employer\n- Evidence: concise summary of responsibilities and strongest matching requirements from the live posting\nDo not infer or invent posting dates or compensation. Include totals, qualified leads, excluded stale/unverified results, inaccessible sources, and a source summary. Do not claim a source was searched unless the corresponding agent reported it.\n\n${agentResults.join('\n\n')}\n\n## CONSOLE CUSTOM-SITE FETCH CHECK\n${verified || '- No custom sites configured.'}`;
       try {
       payload = await openRouterRequest('/chat/completions', {
         method: 'POST',
@@ -714,7 +731,7 @@ app.post('/api/run-command', async (req, res) => {
           temperature: settings.temperature,
           max_tokens: settings.maxTokens,
           messages: [
-            { role: 'system', content: `You are the lead coordinator for a job-search console. Return a useful Markdown report grounded only in the supplied agent results. Every reported role must have a direct URL, an exact or explicitly unavailable posting date, a closing date, a ${checkedOn} verification date, and Status: Active. Never promote an unverified or inactive vacancy into the report.` },
+            { role: 'system', content: `You are the lead coordinator for a job-search console. ${countryRule} Return a useful Markdown report grounded only in the supplied agent results. Every reported role must have a direct URL, an exact or explicitly unavailable posting date, a closing date, a ${checkedOn} verification date, and Status: Active. Never promote an unverified or inactive vacancy into the report.` },
             { role: 'user', content: synthesisInput },
           ],
         }),

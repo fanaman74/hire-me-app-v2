@@ -1,6 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { DEFAULT_SEARCH_SOURCES } from '../shared/search-sources.js';
+import { customSearchSourceId, DEFAULT_SEARCH_SOURCES, SEARCH_SOURCE_IDS } from '../shared/search-sources.js';
 
 export const PROVIDERS = {
   openrouter: { id: 'openrouter', label: 'OpenRouter', env: 'OPENROUTER_API_KEY' },
@@ -36,7 +36,45 @@ export const DEFAULT_SETTINGS = {
   temperature: 0.3,
   maxTokens: 4096,
   searchSources: DEFAULT_SEARCH_SOURCES,
+  searchCountry: '',
+  customSearchSources: [],
 };
+
+export const MAX_CUSTOM_SEARCH_SOURCES = 20;
+
+function normalizedUrl(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return null;
+  try {
+    const url = new URL(/^https?:\/\//i.test(raw) ? raw : `https://${raw}`);
+    if (!['http:', 'https:'].includes(url.protocol) || !url.hostname.includes('.') || url.hostname.length > 253 || url.username || url.password) return null;
+    url.hash = '';
+    return url.toString().replace(/\/$/, '');
+  } catch { return null; }
+}
+
+export function normalizeCustomSearchSource(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const url = normalizedUrl(value.url);
+  if (!url) return null;
+  const parsed = new URL(url);
+  const id = customSearchSourceId(url);
+  const label = String(value.label || parsed.hostname).trim().slice(0, 100);
+  const description = String(value.description || 'Custom job-search source').trim().slice(0, 200);
+  if (!label) return null;
+  return { id, label, url, description, domains: [parsed.hostname], custom: true };
+}
+
+export function normalizeCustomSearchSources(value, { strict = false } = {}) {
+  if (!Array.isArray(value) || value.length > MAX_CUSTOM_SEARCH_SOURCES) return strict ? null : [];
+  const normalized = [];
+  for (const entry of value) {
+    const source = normalizeCustomSearchSource(entry);
+    if (!source) return strict ? null : normalized;
+    if (!normalized.some((item) => item.id === source.id)) normalized.push(source);
+  }
+  return normalized;
+}
 
 export function normalizeProvider(value) { return Object.hasOwn(PROVIDERS, value) ? value : DEFAULT_SETTINGS.provider; }
 export function modelsForProvider(provider) { return DIRECT_MODELS[normalizeProvider(provider)] || []; }
@@ -107,12 +145,19 @@ export function createSettingsStore(rootDir) {
       const directDefault = modelsForProvider(provider)[0]?.id;
       const savedModel = String(raw.model || '');
       const model = provider === 'openrouter' || modelsForProvider(provider).some((entry) => entry.id === savedModel) ? savedModel || DEFAULT_SETTINGS.model : directDefault;
+      const customSearchSources = normalizeCustomSearchSources(raw.customSearchSources);
+      const validSourceIds = new Set([...SEARCH_SOURCE_IDS, ...customSearchSources.map((source) => source.id)]);
+      const searchSources = Array.isArray(raw.searchSources)
+        ? [...new Set(raw.searchSources.map(String))].filter((id) => validSourceIds.has(id))
+        : DEFAULT_SEARCH_SOURCES;
       const result = {
         provider,
         model,
         temperature: Number.isFinite(Number(raw.temperature)) ? Number(raw.temperature) : DEFAULT_SETTINGS.temperature,
         maxTokens: Number.isInteger(Number(raw.maxTokens)) ? Number(raw.maxTokens) : DEFAULT_SETTINGS.maxTokens,
-        searchSources: Array.isArray(raw.searchSources) ? raw.searchSources : DEFAULT_SEARCH_SOURCES,
+        searchSources: searchSources.length ? searchSources : DEFAULT_SEARCH_SOURCES,
+        searchCountry: typeof raw.searchCountry === 'string' ? raw.searchCountry.trim().slice(0, 120) : '',
+        customSearchSources,
         providerKeys: publicProviderKeyStatus(storedKeys),
         apiKeyConfigured: Boolean(selectedKey),
         apiKeySource: envKey(provider).key ? 'environment' : selectedKey ? 'settings' : null,
@@ -133,7 +178,21 @@ export function createSettingsStore(rootDir) {
       }
       if (typeof next.apiKey === 'string' && next.apiKey.trim()) providerKeys[provider] = next.apiKey.trim();
       if (next.clearApiKey === true) delete providerKeys[provider];
-      const updated = { ...current, provider, model: next.model, temperature: next.temperature, maxTokens: next.maxTokens, searchSources: next.searchSources, providerKeys };
+      const customSearchSources = next.customSearchSources === undefined
+        ? normalizeCustomSearchSources(current.customSearchSources)
+        : normalizeCustomSearchSources(next.customSearchSources, { strict: true });
+      if (!customSearchSources) {
+        const error = new Error('Custom search sources must be valid HTTP or HTTPS URLs, with a maximum of 20 entries.');
+        error.status = 400;
+        throw error;
+      }
+      const searchCountry = next.searchCountry === undefined ? String(current.searchCountry || '').trim() : String(next.searchCountry || '').trim();
+      if (searchCountry.length > 120) {
+        const error = new Error('Country filter must be 120 characters or fewer.');
+        error.status = 400;
+        throw error;
+      }
+      const updated = { ...current, provider, model: next.model, temperature: next.temperature, maxTokens: next.maxTokens, searchSources: next.searchSources, searchCountry, customSearchSources, providerKeys };
       delete updated.apiKey;
       delete updated.customSearchSites;
       await fs.mkdir(dataDir, { recursive: true });

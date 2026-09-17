@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
+import { customSearchSourceId } from '../shared/search-sources.js';
 import { createSettingsStore, DEFAULT_SETTINGS, modelsForProvider } from './settings.js';
 
 test('settings store returns defaults and persists model choices', async () => {
@@ -44,4 +45,21 @@ test('settings store migrates legacy OpenRouter keys and keeps provider keys pri
   assert.equal(direct.providerKeys.openrouter, 'legacy-openrouter-key');
   assert.deepEqual(modelsForProvider('gemini').map((model) => model.id), ['gemini-2.5-flash', 'gemini-2.5-pro']);
   assert.deepEqual(modelsForProvider('kimi').map((model) => model.id), ['kimi-k3', 'kimi-k2.6']);
+});
+
+test('settings store persists country and normalized custom sources', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'hire-me-agents-custom-sources-'));
+  const store = createSettingsStore(root);
+  const source = { label: 'Example Careers', url: 'example.com/careers/#jobs', description: 'Employer vacancies' };
+  await store.update({
+    provider: 'openrouter', model: DEFAULT_SETTINGS.model, temperature: 0.3, maxTokens: 4096,
+    searchCountry: 'Belgium', customSearchSources: [source], searchSources: ['hn_hiring', customSearchSourceId('https://example.com/careers')],
+  });
+  const settings = await store.get();
+  assert.equal(settings.searchCountry, 'Belgium');
+  assert.equal(settings.customSearchSources.length, 1);
+  assert.equal(settings.customSearchSources[0].url, 'https://example.com/careers');
+  assert.equal(settings.customSearchSources[0].custom, true);
+  assert.deepEqual(settings.searchSources, ['hn_hiring', customSearchSourceId('https://example.com/careers')]);
+  await assert.rejects(() => store.update({ ...settings, customSearchSources: [{ label: 'Bad', url: 'javascript:alert(1)' }] }), /valid HTTP or HTTPS/);
 });
