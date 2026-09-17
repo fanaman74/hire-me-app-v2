@@ -391,11 +391,13 @@ code { color: var(--signal); font-family: inherit; }
 .custom-source-form { display: grid; grid-template-columns: 1fr 1.35fr 1.2fr auto; gap: 8px; align-items: center; }
 .custom-source-form input { min-height: 40px; }
 .custom-source-list { margin-top: 10px; border-top: 1px solid var(--line); border-left: 1px solid var(--line); }
-.custom-source-row { min-height: 58px; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 7px 9px 7px 12px; background: #070806; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.custom-source-row { min-height: 69px; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 9px 10px 12px; background: #070806; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.custom-source-row:hover { background: #0d0f0b; }
 .custom-source-row.selected { background: #10170b; }
 .custom-source-row label { min-width: 0; display: grid; grid-template-columns: 25px minmax(0, 1fr); align-items: center; gap: 10px; cursor: pointer; }
 .custom-source-row label > span:last-child { min-width: 0; }
 .custom-source-row input { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+.custom-source-row.selected .source-check { background: var(--signal); border-color: var(--signal); }
 .custom-source-row strong, .custom-source-row small { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .custom-source-row strong { color: var(--soft); font-size: 9px; font-weight: 500; }.custom-source-row small { margin-top: 4px; color: var(--muted); font-size: 7px; }
 .custom-source-row > button { width: 28px; height: 28px; display: grid; place-items: center; flex: 0 0 auto; color: var(--muted); background: transparent; border: 1px solid var(--line); cursor: pointer; }.custom-source-row > button:hover { color: var(--danger); border-color: var(--danger); }
