@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import test from 'node:test';
-import { extractJobLeads } from '../shared/jobs.js';
+import { extractJobLeads, jobsFromSearchResult } from '../shared/jobs.js';
 
 process.env.NODE_ENV = 'test';
 process.env.OPENROUTER_API_KEY = 'test-key';
@@ -23,6 +23,13 @@ test('Routera catalog prices are normalized from per-million units', () => {
 
 test('search lead parser deduplicates canonical posting URLs', () => {
   const leads = extractJobLeads('### [Engineer — Acme](https://example.com/jobs/1#apply)\n- Checked: 2026-09-16\n\n### [Engineer — Acme](https://example.com/jobs/1)\n- Checked: 2026-09-16');
+  assert.equal(leads.length, 1);
+  assert.equal(leads[0].canonicalUrl, 'https://example.com/jobs/1');
+});
+
+test('search result parsing falls back to structured report content when server jobs are empty', () => {
+  const content = '### [Engineer — Acme](https://example.com/jobs/1)\n- Checked: 2026-09-16\n- Status: Active\n- Evidence: Build reliable systems';
+  const leads = jobsFromSearchResult({ jobs: [], content });
   assert.equal(leads.length, 1);
   assert.equal(leads[0].canonicalUrl, 'https://example.com/jobs/1');
 });

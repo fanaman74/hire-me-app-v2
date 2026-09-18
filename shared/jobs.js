@@ -78,6 +78,12 @@ export function extractJobLeads(content) {
   return jobs.slice(0, 100);
 }
 
+/** Prefer server-enriched records, but recover structured leads from the report when none were returned. */
+export function jobsFromSearchResult(result) {
+  const serverJobs = Array.isArray(result?.jobs) ? result.jobs : [];
+  return serverJobs.length > 0 ? serverJobs : extractJobLeads(result?.content);
+}
+
 export function recoverJobRecords(savedJobs, dismissedJobIds = []) {
   const dismissed = new Set(Array.isArray(dismissedJobIds) ? dismissedJobIds : []);
   return (Array.isArray(savedJobs) ? savedJobs : []).filter((job) => {
