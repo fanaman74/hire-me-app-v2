@@ -804,6 +804,7 @@ function WorkflowStudio({ settings, activeCandidate, onWorkflowComplete, onUpdat
   const jobSearchReady = profileReady && searchConfigReady;
   const savedJobs = activeCandidate?.jobs || [];
   const selectedJob = savedJobs.find((job) => job.id === selectedJobId) || null;
+  const nextCompletedWorkflow = runState.status === 'complete' ? nextWorkflowFor(WORKFLOWS, selected.id) : null;
 
   function candidateSourceFor(workflowId) {
     if (!activeCandidate) return '';
@@ -1138,7 +1139,10 @@ function WorkflowStudio({ settings, activeCandidate, onWorkflowComplete, onUpdat
                   {runState.status === 'failed' && 'The agent did not finish. Review the error above and run it again.'}
                 </small>
               </span>
-              <span className="process-status-label">{runState.status === 'running' ? 'IN PROGRESS' : runState.status === 'complete' ? 'COMPLETED' : 'FAILED'}</span>
+              <span className="process-status-actions">
+                <span className="process-status-label">{runState.status === 'running' ? 'IN PROGRESS' : runState.status === 'complete' ? 'COMPLETED' : 'FAILED'}</span>
+                {nextCompletedWorkflow && <button type="button" className="process-status-next" onClick={() => chooseWorkflow(nextCompletedWorkflow)}>Next step <ArrowRight size={14} /></button>}
+              </span>
             </div>
           )}
         </section>
