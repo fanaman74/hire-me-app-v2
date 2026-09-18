@@ -1175,7 +1175,10 @@ function WorkflowStudio({ settings, activeCandidate, onWorkflowComplete, onUpdat
               </div>
             </div>
           )}
-          {!loading && selected.id === 'find-me-a-job' && savedJobs.length === 0 && <div className="no-verified-roles"><Search size={20} /><strong>No verified job leads were saved</strong><small>Review the search report for source failures or excluded roles, then run the search again if needed.</small></div>}
+          {!loading && selected.id === 'find-me-a-job' && savedJobs.length === 0 && <>
+            <div className="no-verified-roles"><Search size={20} /><strong>No verified job leads were saved</strong><small>Review the search report for source failures or excluded roles, then run the search again if needed.</small></div>
+            {output && <details className="job-search-report" open><summary>View search report</summary><pre>{output}</pre></details>}
+          </>}
           {runMeta && <div className="output-meta"><span>{runMeta.model}</span>{runMeta.tokens && <span>{runMeta.tokens.toLocaleString()} tokens</span>}{runMeta.sourceResults?.length > 0 && <details className="source-run-summary"><summary>{runMeta.sourceResults.filter((source) => String(source.status || '').startsWith('agent-')).filter((source) => source.status === 'agent-complete').length}/{runMeta.sourceResults.filter((source) => String(source.status || '').startsWith('agent-')).length} agents completed</summary><div>{runMeta.sourceResults.map((source) => <span key={source.name} className={source.status === 'agent-complete' || source.status === 'fetch-ok' ? 'source-run-ok' : 'source-run-failed'}>{source.name}: {source.status}{source.error ? ` — ${source.error}` : ''}</span>)}</div></details>}</div>}
         </section>
       )}

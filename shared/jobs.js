@@ -42,21 +42,24 @@ function field(block, name) {
  */
 export function extractJobLeads(content) {
   const text = String(content || '').replace(/\r\n/g, '\n');
-  const headingPattern = /^###\s+\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)\s*$/gim;
+  const headingPattern = /^###\s+(?:\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)|([^\n]+?))\s*$/gim;
   const headings = [...text.matchAll(headingPattern)];
   const jobs = [];
   const seen = new Set();
   headings.forEach((match, index) => {
-    const url = canonicalJobUrl(match[2]);
-    if (!url || seen.has(url)) return;
-    const titleAndCompany = match[1].trim();
-    const [title, company = ''] = titleAndCompany.split(/\s+[—–-]\s+/, 2);
     const block = text.slice(match.index + match[0].length, headings[index + 1]?.index || text.length);
+    const inlineUrl = match[2] || '';
+    const fieldUrl = field(block, 'URL');
+    const sourceUrl = inlineUrl || fieldUrl;
+    const url = canonicalJobUrl(sourceUrl);
+    if (!url || seen.has(url)) return;
+    const titleAndCompany = (match[1] || match[3] || '').replace(/\s+\((?:https?:\/\/[^)]+)\)\s*$/, '').trim();
+    const [title, company = ''] = titleAndCompany.split(/\s+[—–-]\s+/, 2);
     const job = {
       id: `job-${encodeURIComponent(url)}`,
       title: title.trim() || 'Job listing',
       company: company.trim(),
-      url: match[2].trim(),
+      url: sourceUrl.trim(),
       canonicalUrl: url,
       summary: field(block, 'Evidence'),
       postedDate: field(block, 'Posted'),

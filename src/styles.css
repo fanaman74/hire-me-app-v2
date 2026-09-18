@@ -293,6 +293,9 @@ textarea::placeholder, input::placeholder { color: #5e6358; }
 .completion-toast .completion-next { min-height: 31px; margin-top: 10px; display: inline-flex; align-items: center; gap: 8px; padding: 0 10px; color: var(--bg); background: var(--signal); border: 1px solid var(--signal); font: inherit; font-size: 8px; font-weight: 600; cursor: pointer; }
 .completion-toast .completion-next:hover { color: var(--signal); background: transparent; }
 .completion-timer { position: absolute; left: 0; right: 0; bottom: 0; height: 2px; background: var(--signal); transform-origin: left; animation: toast-timer 12s linear forwards; }
+.job-search-report { margin-top: 17px; border-top: 1px solid var(--line); }
+.job-search-report summary { padding: 13px 23px; color: var(--signal); cursor: pointer; font-size: 8px; letter-spacing: .1em; text-transform: uppercase; }
+.job-search-report pre { max-height: 420px; margin: 0; overflow: auto; padding: 0 23px 20px; color: var(--soft); background: transparent; font-size: 9px; line-height: 1.7; white-space: pre-wrap; }
 
 .empty { min-height: 355px; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; }
 .empty-icon { width: 62px; height: 62px; display: grid; place-items: center; color: var(--signal); border: 1px solid var(--line-bright); }
