@@ -131,7 +131,7 @@ export function publicProviderKeyStatus(providerKeys = {}) {
   return Object.fromEntries(Object.keys(PROVIDERS).map((provider) => {
     const environment = envKey(provider);
     const stored = String(providerKeys[provider] || '').trim();
-    return [provider, { configured: Boolean(environment.key || stored), source: environment.key ? environment.source : stored ? 'settings' : null }];
+    return [provider, { configured: Boolean(stored || environment.key), source: stored ? 'settings' : environment.key ? environment.source : null }];
   }));
 }
 
@@ -166,7 +166,7 @@ export function createSettingsStore(rootDir) {
       const storedKeys = cleanKeys(raw.providerKeys);
       if (!storedKeys.openrouter && typeof raw.apiKey === 'string' && raw.apiKey.trim()) storedKeys.openrouter = raw.apiKey.trim();
       const provider = normalizeProvider(raw.provider);
-      const keys = Object.fromEntries(Object.keys(PROVIDERS).map((id) => [id, envKey(id).key || storedKeys[id] || '']));
+      const keys = Object.fromEntries(Object.keys(PROVIDERS).map((id) => [id, storedKeys[id] || envKey(id).key || '']));
       const selectedKey = keys[provider] || '';
       const customProvider = normalizeCustomProvider(raw.customProvider);
       const directDefault = provider === 'custom' ? customProvider?.model : modelsForProvider(provider)[0]?.id;
@@ -188,7 +188,7 @@ export function createSettingsStore(rootDir) {
         customProvider,
         providerKeys: publicProviderKeyStatus(storedKeys),
         apiKeyConfigured: Boolean(selectedKey),
-        apiKeySource: envKey(provider).key ? 'environment' : selectedKey ? 'settings' : null,
+        apiKeySource: storedKeys[provider] ? 'settings' : envKey(provider).key ? 'environment' : null,
       };
       if (includeSecret) { result.providerKeys = keys; result.apiKey = selectedKey; }
       return result;

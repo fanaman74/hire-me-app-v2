@@ -63,6 +63,31 @@ test('settings store persists custom OpenAI-compatible providers without exposin
   assert.equal(privateSettings.apiKey, 'custom-secret');
 });
 
+test('saved user provider keys take precedence over environment fallback keys', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'hire-me-agents-env-key-'));
+  const previous = process.env.ROUTERA_API_KEY;
+  try {
+    process.env.ROUTERA_API_KEY = 'environment-routera-key';
+    const store = createSettingsStore(root);
+    await store.update({
+      provider: 'routera',
+      model: 'openai/gpt-5.5',
+      temperature: 0.3,
+      maxTokens: 4096,
+      searchSources: ['remoteok'],
+      apiKey: 'profile-routera-key',
+    });
+    const publicSettings = await store.get();
+    assert.equal(publicSettings.providerKeys.routera.source, 'settings');
+    assert.equal(publicSettings.apiKeySource, 'settings');
+    const privateSettings = await store.get({ includeSecret: true });
+    assert.equal(privateSettings.apiKey, 'profile-routera-key');
+  } finally {
+    if (previous === undefined) delete process.env.ROUTERA_API_KEY;
+    else process.env.ROUTERA_API_KEY = previous;
+  }
+});
+
 test('settings store persists country and normalized custom sources', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'hire-me-agents-custom-sources-'));
   const store = createSettingsStore(root);
