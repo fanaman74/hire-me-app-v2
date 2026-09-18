@@ -225,7 +225,11 @@ async function fetchProvider(url, { provider, model, headers = {}, body, signal,
   if (signal?.aborted) throw new DOMException('The request was cancelled.', 'AbortError');
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const timeoutController = new AbortController();
-    const timeout = setTimeout(() => timeoutController.abort(), timeoutMs);
+    let timedOut = false;
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      timeoutController.abort();
+    }, timeoutMs);
     const abortFromCaller = () => timeoutController.abort();
     signal?.addEventListener('abort', abortFromCaller, { once: true });
     try {
@@ -241,6 +245,8 @@ async function fetchProvider(url, { provider, model, headers = {}, body, signal,
       return data;
     } catch (error) {
       if (error?.provider === provider) throw error;
+      if (timedOut && error.name === 'AbortError') throw providerError(provider, model, 504, `Timed out after ${Math.round(timeoutMs / 1000)} seconds.`);
+      if (signal?.aborted && error.name === 'AbortError') throw new DOMException('The request was cancelled.', 'AbortError');
       const retryable = error instanceof TypeError || [408, 425, 429, 500, 502, 503, 504].includes(error.status);
       if (attempt === 0 && retryable && !signal?.aborted) { await new Promise((resolve) => setTimeout(resolve, 250)); continue; }
       if (error.name === 'AbortError') throw error;
@@ -744,10 +750,12 @@ app.post('/api/run-command', async (req, res) => {
       const checkedOn = new Date().toISOString().slice(0, 10);
       const sourcePlans = configuredSources.map((source) => ({
         name: source.label,
+        domains: source.domains || [],
         instruction: `Search only ${source.label} (${source.id})${source.url ? ` at ${source.url}` : ''}. Use web search with a site restriction, then web fetch the most relevant individual job pages. Follow the source-specific strategy from the command instructions when applicable.`,
       }));
       candidateSites.forEach((site) => sourcePlans.push({
         name: site,
+        domains: [new URL(site).hostname],
         instruction: `Search only the custom site ${site}. Use domain-restricted web search for the candidate's target roles, then web fetch individual vacancy pages. Do not count assets, navigation, training courses, or the homepage as jobs.`,
       }));
       const agentResults = await mapWithConcurrency(sourcePlans, 4, async (plan) => {
@@ -760,7 +768,20 @@ app.post('/api/run-command', async (req, res) => {
             model: settings.model,
             temperature: settings.temperature,
             max_tokens: Math.min(settings.maxTokens, 4096),
-            tools: [{ type: 'openrouter:web_search' }, { type: 'openrouter:web_fetch' }],
+            tools: [
+              {
+                type: 'openrouter:web_search',
+                parameters: {
+                  engine: 'exa',
+                  max_results: 5,
+                  max_total_results: 10,
+                  search_context_size: 'medium',
+                  ...(plan.domains.length ? { allowed_domains: plan.domains } : {}),
+                },
+              },
+              { type: 'openrouter:web_fetch' },
+            ],
+            stop_server_tools_when: [{ type: 'step_count_is', step_count: 6 }],
             messages: [
               { role: 'system', content: `${prompt}\n\n${countryRule}\n\nToday is ${checkedOn}. You are one focused search agent in a parallel job-search run. Open every individual vacancy with web fetch immediately before reporting it. Exclude search-result snippets, inaccessible pages, expired deadlines, closed/filled roles, talent pools, and pages that no longer accept applications. Return only verified active job leads. Use exactly this structure for every role:\n### [Role title — Company](direct job-posting URL)\n- Posted: YYYY-MM-DD, exact displayed date, or Not stated\n- Closing: YYYY-MM-DD, Open until filled, or Not stated\n- Checked: ${checkedOn}\n- Status: Active\n- Location: city/country or Remote\n- Work mode: Remote, Hybrid, On-site, or Not stated\n- Compensation: exact advertised salary/range and currency, or Not stated\n- Source: job board or employer\n- Evidence: concise summary of responsibilities and the strongest matching requirements from the live posting\nNever report a role without a direct clickable URL and live-page verification. Do not invent dates, compensation, or listings.` },
               { role: 'user', content: `${plan.instruction}\n\nCandidate and search context:\n${userInput}` },
