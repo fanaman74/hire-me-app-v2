@@ -56,6 +56,7 @@ function apiError(error, fallback = 'Request failed') {
 const FETCH_TIMEOUT_MS = 12000;
 const FETCH_MAX_BYTES = 2_000_000;
 const OPENROUTER_TIMEOUT_MS = 90_000;
+const JOB_SEARCH_PROVIDER_TIMEOUT_MS = 240_000;
 const ROUTERA_PRICE_PER_MILLION = 1_000_000;
 
 export function normalizeRouteraPrice(value) {
@@ -220,11 +221,11 @@ function safeProviderDetail(data) {
   return message.replace(/\b(?:sk-or-v1-|sk-|AIza|key-)[a-z0-9._-]{8,}\b/gi, '[redacted]');
 }
 
-async function fetchProvider(url, { provider, model, headers = {}, body, signal, method = 'POST', redirect = 'follow' } = {}) {
+async function fetchProvider(url, { provider, model, headers = {}, body, signal, method = 'POST', redirect = 'follow', timeoutMs = OPENROUTER_TIMEOUT_MS } = {}) {
   if (signal?.aborted) throw new DOMException('The request was cancelled.', 'AbortError');
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const timeoutController = new AbortController();
-    const timeout = setTimeout(() => timeoutController.abort(), OPENROUTER_TIMEOUT_MS);
+    const timeout = setTimeout(() => timeoutController.abort(), timeoutMs);
     const abortFromCaller = () => timeoutController.abort();
     signal?.addEventListener('abort', abortFromCaller, { once: true });
     try {
@@ -754,6 +755,7 @@ app.post('/api/run-command', async (req, res) => {
         const agentPayload = await openRouterRequest('/chat/completions', {
           method: 'POST',
           signal: requestController.signal,
+          timeoutMs: JOB_SEARCH_PROVIDER_TIMEOUT_MS,
           body: JSON.stringify({
             model: settings.model,
             temperature: settings.temperature,
@@ -784,6 +786,7 @@ app.post('/api/run-command', async (req, res) => {
       payload = await openRouterRequest('/chat/completions', {
         method: 'POST',
         signal: requestController.signal,
+        timeoutMs: JOB_SEARCH_PROVIDER_TIMEOUT_MS,
         body: JSON.stringify({
           model: settings.model,
           temperature: settings.temperature,
