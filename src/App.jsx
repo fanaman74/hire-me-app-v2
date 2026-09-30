@@ -992,9 +992,13 @@ function WorkflowStudio({ settings, activeCandidate, onWorkflowComplete, onSaveA
   const [outputFontSize, setOutputFontSize] = useState(16);
   const [cvSaveState, setCvSaveState] = useState('');
   const [cvActionLoading, setCvActionLoading] = useState(false);
+  const [analysisFocus, setAnalysisFocus] = useState(false);
   const activeCandidateIdRef = useRef(activeCandidate?.id || '');
   const selectedWorkflowIdRef = useRef(selected.id);
   const selectedJobIdRef = useRef(selectedJobId);
+  const analysisFocusRef = useRef(false);
+  const outputPanelRef = useRef(null);
+  const restoreContextRef = useRef({ candidateId: activeCandidate?.id || '', workflowId: activeCandidate?.lastWorkflowId || '' });
   const completionTimer = useRef(null);
   const runController = useRef(null);
   const activeSearchSources = [
@@ -1014,6 +1018,14 @@ function WorkflowStudio({ settings, activeCandidate, onWorkflowComplete, onSaveA
   useEffect(() => { activeCandidateIdRef.current = activeCandidate?.id || ''; }, [activeCandidate?.id]);
   useEffect(() => { selectedWorkflowIdRef.current = selected.id; }, [selected.id]);
   useEffect(() => { selectedJobIdRef.current = selectedJobId; }, [selectedJobId]);
+  useEffect(() => {
+    if (!analysisFocus || selected.id !== 'add-job' || (!loading && !output)) return undefined;
+    const frame = window.requestAnimationFrame(() => {
+      outputPanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      outputPanelRef.current?.focus({ preventScroll: true });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [analysisFocus, selected.id, loading, output]);
 
   function candidateSourceFor(workflowId) {
     if (!activeCandidate) return '';
@@ -1023,6 +1035,8 @@ function WorkflowStudio({ settings, activeCandidate, onWorkflowComplete, onSaveA
   function chooseWorkflow(workflow) {
     window.clearTimeout(completionTimer.current);
     setSelected(workflow);
+    setAnalysisFocus(false);
+    analysisFocusRef.current = false;
     setInput(candidateSourceFor(workflow.id));
     setOutput('');
     setError('');
@@ -1071,6 +1085,8 @@ function WorkflowStudio({ settings, activeCandidate, onWorkflowComplete, onSaveA
       return;
     }
     window.clearTimeout(completionTimer.current);
+    setAnalysisFocus(false);
+    analysisFocusRef.current = false;
     setSelected(workflow);
     selectedWorkflowIdRef.current = workflow.id;
     setSelectedJobId(roleId);
@@ -1091,6 +1107,12 @@ function WorkflowStudio({ settings, activeCandidate, onWorkflowComplete, onSaveA
     window.clearTimeout(completionTimer.current);
     const persistedWorkflow = lastWorkflowFor(activeCandidate);
     const persistedOutput = workflowOutputText(activeCandidate?.workflowOutputs?.[persistedWorkflow.id]);
+    const preserveFocusedAnalysis = analysisFocusRef.current
+      && selected.id === 'add-job'
+      && persistedWorkflow.id === 'add-job'
+      && restoreContextRef.current.candidateId === activeCandidate?.id
+      && selectedJobIdRef.current === activeCandidate?.lastJobId;
+    restoreContextRef.current = { candidateId: activeCandidate?.id || '', workflowId: persistedWorkflow.id };
     setOutput('');
     setError('');
     setRunState({ status: 'idle' });
@@ -1099,6 +1121,10 @@ function WorkflowStudio({ settings, activeCandidate, onWorkflowComplete, onSaveA
     setCustomSiteDraft('');
     setCustomSiteError('');
     setSelected(persistedWorkflow);
+    if (!preserveFocusedAnalysis) {
+      setAnalysisFocus(false);
+      analysisFocusRef.current = false;
+    }
     setSelectedJobId(activeCandidate?.lastJobId || '');
     const persistedJob = (activeCandidate?.jobs || []).find((job) => job.id === activeCandidate?.lastJobId);
     setOutput(persistedWorkflow.id === 'prepare-cv' ? (persistedJob ? (persistedJob.tailoredCv?.content || '') : persistedOutput) : persistedOutput);
@@ -1215,22 +1241,40 @@ function WorkflowStudio({ settings, activeCandidate, onWorkflowComplete, onSaveA
     }
   }
 
-  function analyzeSavedJob(job) {
+  function analyzeSavedJob(job, { force = false } = {}) {
     if (!job || loading || !activeCandidate) return;
     const workflow = WORKFLOWS.find((item) => item.id === 'add-job');
     const roleInput = [`${job.title}${job.company ? ` — ${job.company}` : ''}`, job.url, job.summary].filter(Boolean).join('\n\n');
     setSelected(workflow);
     selectedWorkflowIdRef.current = workflow.id;
+    setAnalysisFocus(true);
+    analysisFocusRef.current = true;
     setSelectedJobId(job.id);
     selectedJobIdRef.current = job.id;
     onSelectCandidateJob(activeCandidate.id, job.id);
     setInput(roleInput);
-    setOutput('');
+    setOutput(force ? '' : job.artifacts?.analysis || '');
     setRunMeta(null);
     setError('');
     setCompletionNotice(null);
+    if (job.artifacts?.analysis && !force) {
+      setRunMeta({ model: 'saved', tokens: 0 });
+      setRunState({ status: 'complete', workflow: workflow.title, finishedAt: new Date(job.updatedAt || Date.now()) });
+      return;
+    }
     setRunState({ status: 'idle' });
-    void run({ workflowOverride: workflow, jobIdOverride: job.id, inputOverride: roleInput });
+    void run({ workflowOverride: workflow, jobIdOverride: job.id, inputOverride: roleInput, analysisFocusOverride: true });
+  }
+
+  function leaveAnalysisFocus() {
+    analysisFocusRef.current = false;
+    setAnalysisFocus(false);
+    runController.current?.abort();
+    setOutput('');
+    setRunMeta(null);
+    setRunState({ status: 'idle' });
+    setCompletionNotice(null);
+    setError('');
   }
 
   function markJobNotInterested(jobId) {
@@ -1246,7 +1290,7 @@ function WorkflowStudio({ settings, activeCandidate, onWorkflowComplete, onSaveA
     }
   }
 
-  async function run({ workflowOverride = null, jobIdOverride = null, inputOverride = null } = {}) {
+  async function run({ workflowOverride = null, jobIdOverride = null, inputOverride = null, analysisFocusOverride = null } = {}) {
     runController.current?.abort();
     const controller = new AbortController();
     runController.current = controller;
@@ -1255,9 +1299,10 @@ function WorkflowStudio({ settings, activeCandidate, onWorkflowComplete, onSaveA
     const runSelectedJobId = jobIdOverride ?? selectedJobId;
     const runSelectedJob = savedJobs.find((job) => job.id === runSelectedJobId) || null;
     const runInput = inputOverride ?? input;
+    const runAnalysisFocus = analysisFocusOverride ?? analysisFocus;
     const runWorkflowId = runWorkflow.id;
     const runJobId = runSelectedJobId;
-    const isCurrentRunContext = (resolvedJobId = runJobId) => activeCandidateIdRef.current === runCandidateId && selectedWorkflowIdRef.current === runWorkflowId && (selectedJobIdRef.current === runJobId || (resolvedJobId && selectedJobIdRef.current === resolvedJobId));
+    const isCurrentRunContext = (resolvedJobId = runJobId) => activeCandidateIdRef.current === runCandidateId && selectedWorkflowIdRef.current === runWorkflowId && (!runAnalysisFocus || analysisFocusRef.current) && (selectedJobIdRef.current === runJobId || (resolvedJobId && selectedJobIdRef.current === resolvedJobId));
     setLoading(true);
     setError('');
     setOutput('');
@@ -1358,6 +1403,7 @@ function WorkflowStudio({ settings, activeCandidate, onWorkflowComplete, onSaveA
       if (runWorkflow.id === 'mark-submitted' && runSelectedJobId && runCandidateId) onUpdateCandidateJobStage(runCandidateId, runSelectedJobId, submissionStage);
       completionTimer.current = window.setTimeout(() => setCompletionNotice(null), 12000);
     } catch (err) {
+      if (!isCurrentRunContext()) return;
       if (err.name === 'AbortError') {
         setError('The run was cancelled.');
         setRunState({ status: 'failed', workflow: runWorkflow.title });
@@ -1467,7 +1513,7 @@ function WorkflowStudio({ settings, activeCandidate, onWorkflowComplete, onSaveA
               <div className="upload-divider"><span>OR PASTE BELOW</span></div>
             </div>
           )}
-          {<><label className="field-label" htmlFor="agent-input"><span>{selected.id === 'find-me-a-job' ? 'ADDITIONAL SEARCH NOTES (OPTIONAL)' : selected.id === 'add-job' ? 'VACANCY / ROLE DETAILS' : selected.id === 'prepare-cv' ? 'VACANCY / ROLE DETAILS' : 'SOURCE MATERIAL'}</span>{activeCandidate && ['setup-candidate', 'build-search-config'].includes(selected.id) && input === activeCandidate.resumeText && <strong>LOADED FROM {activeCandidate.name.toUpperCase()}'S CV</strong>}</label><textarea id="agent-input" value={input} onChange={(event) => setInput(event.target.value)} placeholder={selected.placeholder} rows={selected.id === 'find-me-a-job' ? 4 : 12} /></>}
+          {!(selected.id === 'add-job' && analysisFocus) && <><label className="field-label" htmlFor="agent-input"><span>{selected.id === 'find-me-a-job' ? 'ADDITIONAL SEARCH NOTES (OPTIONAL)' : selected.id === 'add-job' ? 'VACANCY / ROLE DETAILS' : selected.id === 'prepare-cv' ? 'VACANCY / ROLE DETAILS' : 'SOURCE MATERIAL'}</span>{activeCandidate && ['setup-candidate', 'build-search-config'].includes(selected.id) && input === activeCandidate.resumeText && <strong>LOADED FROM {activeCandidate.name.toUpperCase()}'S CV</strong>}</label><textarea id="agent-input" value={input} onChange={(event) => setInput(event.target.value)} placeholder={selected.placeholder} rows={selected.id === 'find-me-a-job' ? 4 : 12} /></>}
           {selected.id === 'find-me-a-job' && (
             <>
               <div className="salary-expectation">
@@ -1491,7 +1537,7 @@ function WorkflowStudio({ settings, activeCandidate, onWorkflowComplete, onSaveA
               </div>
             </>
           )}
-          {['add-job', 'write-cover-letter', 'mark-submitted'].includes(selected.id) && (
+          {!analysisFocus && ['add-job', 'write-cover-letter', 'mark-submitted'].includes(selected.id) && (
             <div className={`job-picker ${selected.id === 'add-job' ? 'analyze-job-picker' : ''}`}>
               <label className="field-label" htmlFor="saved-job-select"><span>JOBS FOUND IN STEP 3</span><strong>{savedJobs.length} SAVED</strong></label>
               <select id="saved-job-select" value={selectedJobId} onChange={(event) => chooseJob(event.target.value)} disabled={!savedJobs.length}>
@@ -1504,6 +1550,7 @@ function WorkflowStudio({ settings, activeCandidate, onWorkflowComplete, onSaveA
               {selected.id === 'add-job' && <div className="selected-job-details"><div className="selected-job-details-heading"><span className="eyebrow">SELECTED JOB</span>{selectedJob && <span className="selected-job-state">{summaryLoading ? 'SUMMARIZING…' : 'READY TO ANALYZE'}</span>}</div>{selectedJob ? <><h3>{selectedJob.title}</h3>{selectedJob.company && <p className="selected-job-company">{selectedJob.company}</p>}<a href={selectedJob.url} target="_blank" rel="noreferrer">{selectedJob.url} <ArrowRight size={13} /></a><div className="selected-job-summary">{summaryLoading ? 'Reading the posting and preparing a summary…' : (selectedJob.summary || 'No summary was returned. Open the posting link to review the full role description.')}</div></> : <div className="selected-job-empty">Choose a job above to view its role details and prepare it for analysis.</div>}</div>}
             </div>
           )}
+          {selected.id === 'add-job' && analysisFocus && selectedJob && <div className="focused-analysis-role"><div className="focused-analysis-heading"><div><span className="eyebrow">ANALYZING ROLE</span><h3>{selectedJob.title}</h3>{selectedJob.company && <p>{selectedJob.company}</p>}</div><div className="focused-analysis-actions"><button type="button" className="button secondary compact" onClick={leaveAnalysisFocus} disabled={loading}>Back to jobs</button><button type="button" className="button primary compact" onClick={() => analyzeSavedJob(selectedJob, { force: true })} disabled={loading}><RefreshCw className={loading ? 'spin' : ''} size={14} /> Re-analyze</button></div></div>{selectedJob.url && <a href={selectedJob.url} target="_blank" rel="noreferrer">{selectedJob.url} <ArrowRight size={13} /></a>}<div className="selected-job-summary">{selectedJob.summary || 'No saved summary. The analysis will use the role URL and available profile context.'}</div></div>}
           {selected.id === 'prepare-cv' && <div className="selected-job-details prepare-role-details"><div className="selected-job-details-heading"><span className="eyebrow">ROLE FOR TAILORING</span><span className="selected-job-state">{selectedCv?.status === 'approved' ? 'APPROVED CV SAVED' : selectedCv ? 'DRAFT CV SAVED' : 'READY TO PREPARE'}</span></div>{selectedJob ? <><h3>{selectedJob.title}</h3>{selectedJob.company && <p className="selected-job-company">{selectedJob.company}</p>}{selectedJob.url && <a href={selectedJob.url} target="_blank" rel="noreferrer">{selectedJob.url} <ArrowRight size={13} /></a>}<div className="selected-job-summary">The original CV remains unchanged. Edit the tailored draft below, then explicitly approve it when it is ready.</div></> : <><div className="selected-job-empty">Choose a role in Analyze a job, or paste a vacancy above to prepare a CV manually.</div><button type="button" className="button secondary compact prepare-choose-job" onClick={() => chooseWorkflow(WORKFLOWS.find((workflow) => workflow.id === 'add-job'))}><ArrowRight size={14} /> Choose a job in Analyze a job</button></>}</div>}
           {error && <div className="error-banner"><span>{error}</span>{!settings.apiKeyConfigured && <button onClick={onOpenSettings}>Open settings</button>}</div>}
           <div className="runner-actions">
@@ -1537,7 +1584,7 @@ function WorkflowStudio({ settings, activeCandidate, onWorkflowComplete, onSaveA
         </section>
       </div>
       {(output || loading) && (
-        <section className={`output-panel panel output-${selected.id}`}>
+        <section ref={outputPanelRef} tabIndex="-1" className={`output-panel panel output-${selected.id}`}>
           <div className="panel-heading">
             <div><span className="eyebrow">AGENT OUTPUT</span><h2>{selected.title}</h2></div>
             {output && <div className="output-heading-actions">{selected.id !== 'prepare-cv' && <div className="cv-font-controls" aria-label="Output font size"><button type="button" onClick={() => setOutputFontSize((size) => Math.max(14, size - 1))} disabled={outputFontSize <= 14} aria-label="Decrease output font size">A−</button><span>{outputFontSize}px</span><button type="button" onClick={() => setOutputFontSize((size) => Math.min(20, size + 1))} disabled={outputFontSize >= 20} aria-label="Increase output font size">A+</button></div>}<span className="complete-badge">{selected.id === 'prepare-cv' && runState.status !== 'complete' ? <FileText size={15} /> : <CircleCheckBig size={15} />} {selected.id === 'prepare-cv' && runState.status !== 'complete' ? 'Draft' : 'Completed'}</span><button className="button secondary compact" onClick={copyOutput}>{copied ? <Check size={15} /> : <Copy size={15} />}{copied ? 'Copied' : 'Copy'}</button></div>}
