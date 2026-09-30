@@ -84,7 +84,7 @@ Use **Test saved model** after saving to verify the selected model and key toget
 
 The **Setup profile** workflow accepts Markdown, TXT, PDF, and DOCX resumes up to 10 MB. Uploaded files are parsed by the local server and remain editable in the source-material field before the agent runs.
 
-Profiles are reusable and isolated: each stores its own CV text, target role types, custom search sites, active selection, and nine-step workflow progress in the signed-in account's `.data/users/<account-id>/profiles.json` file. Browser storage provides an immediate local cache and existing browser-only profiles are migrated to the local file automatically. Switch the active profile from the homepage before starting a workflow.
+Profiles are reusable and isolated: each stores its own CV text, target role types, custom search sites, active selection, and ten-step workflow progress in the signed-in account's `.data/users/<account-id>/profiles.json` file. Browser storage provides an immediate local cache and existing browser-only profiles are migrated to the local file automatically. Switch the active profile from the homepage before starting a workflow.
 
 For isolated development or browser testing, set `HMA_DATA_DIR` to a separate writable directory. The profile and settings stores use that directory while prompts and the built app remain rooted in the project.
 
@@ -299,6 +299,10 @@ Interview Prep → Mock Interview → Debrief → Track → Stats
 10. **Debrief** (`/interview-prep --debrief`) — Post-interview analysis with follow-up email guidance
 11. **Track** (`/mark-submitted`) — Update application status through the lifecycle
 12. **Stats** (`/job-stats`) — Pipeline summary, weekly activity, unemployment certification data
+
+### Web Console: Tailored CV approval
+
+The web console presents ten numbered workflow steps. After **Analyze a job** completes, choose **Apply for this role** (or open **Prepare CV**) to generate a role-specific CV from the saved original CV, vacancy, and analysis. The generated Markdown remains editable: save a draft, review the rendered preview with the 14–20px font controls, then explicitly approve it. Draft and approved CVs, their role details, vacancy text, and timestamps are stored on that profile's role record; the original CV is preserved. Approval records CV readiness only and does not mark an application as submitted. When an approved tailored CV exists, the cover-letter step uses it as its role-specific source.
 
 ## Configuration
 

@@ -70,3 +70,35 @@ test('run-command returns structured jobs and source results with mocked provide
     globalThis.fetch = originalFetch;
   }
 });
+
+test('run-command accepts prepare-cv and loads its dedicated prompt', async () => {
+  const originalFetch = globalThis.fetch;
+  let providerRequest;
+  globalThis.fetch = async (_url, options) => {
+    providerRequest = JSON.parse(options.body);
+    return new Response(JSON.stringify({ model: 'test/model', choices: [{ message: { content: '# Tailored CV\n\n## Profile\nEvidence-based draft' } }], usage: { total_tokens: 9 } }), { status: 200, headers: { 'content-type': 'application/json' } });
+  };
+  const listener = await new Promise((resolve) => { const server = app.listen(0, '127.0.0.1', () => resolve(server)); });
+  try {
+    const address = listener.address();
+    const register = await new Promise((resolve, reject) => {
+      const request = http.request({ hostname: '127.0.0.1', port: address.port, path: '/api/auth/register', method: 'POST', headers: { 'content-type': 'application/json' } }, (response) => { let body = ''; response.on('data', (chunk) => { body += chunk; }); response.on('end', () => resolve({ status: response.statusCode, cookie: response.headers['set-cookie']?.[0], body: JSON.parse(body) })); });
+      request.on('error', reject);
+      request.end(JSON.stringify({ email: `prepare-cv-${Date.now()}@example.com`, password: 'test-password-123' }));
+    });
+    assert.equal(register.status, 201, JSON.stringify(register.body));
+    const result = await new Promise((resolve, reject) => {
+      const request = http.request({ hostname: '127.0.0.1', port: address.port, path: '/api/run-command', method: 'POST', headers: { 'content-type': 'application/json', cookie: register.cookie } }, (response) => { let body = ''; response.on('data', (chunk) => { body += chunk; }); response.on('end', () => resolve({ status: response.statusCode, body: JSON.parse(body) })); });
+      request.on('error', reject);
+      request.end(JSON.stringify({ command: 'prepare-cv', input: 'ORIGINAL CV CONTENT\nJordan Example\nPlatform leadership\n\nVACANCY FOR THIS ROLE\nHead of Engineering at Acme\n\nSAVED ROLE ANALYSIS\nStrong match.' }));
+    });
+    assert.equal(result.status, 200, JSON.stringify(result.body));
+    assert.match(result.body.content, /Tailored CV/);
+    assert.match(providerRequest.messages[0].content, /senior recruitment consultant/i);
+    assert.match(providerRequest.messages[0].content, /never fabricate/i);
+    assert.match(providerRequest.messages[1].content, /ORIGINAL CV CONTENT/);
+  } finally {
+    await new Promise((resolve) => listener.close(resolve));
+    globalThis.fetch = originalFetch;
+  }
+});

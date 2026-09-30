@@ -53,11 +53,12 @@ const WORKFLOWS = [
   { id: 'build-search-config', number: '02', title: 'Build search config', description: 'Infer roles, filters, compensation targets, and priorities.', icon: SlidersHorizontal, placeholder: 'Paste a resume or profile to generate a search configuration…' },
   { id: 'find-me-a-job', number: '03', title: 'Find matching jobs', description: 'Search from the saved profile and search configuration using default and custom sources.', icon: Search, placeholder: 'Optional: add instructions for this search run…' },
   { id: 'add-job', number: '04', title: 'Analyze a job', description: 'Score one job and build a focused application package.', icon: Plus, placeholder: 'Paste the full job listing and profile context…' },
-  { id: 'write-cover-letter', number: '05', title: 'Write cover letter', description: 'Produce a direct, specific letter grounded in the resume.', icon: FileText, placeholder: 'Paste the job description and the relevant resume…' },
-  { id: 'interview-prep', number: '06', title: 'Interview prep', description: 'Predict questions, prepare STAR stories, and plan negotiation.', icon: Target, placeholder: 'Paste the job description, resume, and known interview format…' },
-  { id: 'mark-submitted', number: '07', title: 'Track submission', description: 'Prepare a clean application status update.', icon: Check, placeholder: 'Enter the role, company, current status, and note…' },
-  { id: 'job-stats', number: '08', title: 'Pipeline stats', description: 'Summarize application activity and conversion health.', icon: Gauge, placeholder: 'Paste your application ledger JSON…' },
-  { id: 'export-resume', number: '09', title: 'Export resume', description: 'Prepare resume content for document export.', icon: FileText, placeholder: 'Paste the tailored resume Markdown…' },
+  { id: 'prepare-cv', number: '05', title: 'Prepare CV', description: 'Tailor the saved CV honestly for a selected role.', icon: FileCheck, placeholder: 'Paste the full vacancy when no saved role is selected…' },
+  { id: 'write-cover-letter', number: '06', title: 'Write cover letter', description: 'Produce a direct, specific letter grounded in the resume.', icon: FileText, placeholder: 'Paste the job description and the relevant resume…' },
+  { id: 'interview-prep', number: '07', title: 'Interview prep', description: 'Predict questions, prepare STAR stories, and plan negotiation.', icon: Target, placeholder: 'Paste the job description, resume, and known interview format…' },
+  { id: 'mark-submitted', number: '08', title: 'Track submission', description: 'Prepare a clean application status update.', icon: Check, placeholder: 'Enter the role, company, current status, and note…' },
+  { id: 'job-stats', number: '09', title: 'Pipeline stats', description: 'Summarize application activity and conversion health.', icon: Gauge, placeholder: 'Paste your application ledger JSON…' },
+  { id: 'export-resume', number: '10', title: 'Export resume', description: 'Prepare resume content for document export.', icon: FileText, placeholder: 'Paste the tailored resume Markdown…' },
 ];
 
 const DEFAULT_MODEL = 'openai/gpt-4.1-mini';
@@ -91,7 +92,7 @@ function recoverJobs(savedJobs, dismissedJobIds = []) {
   return savedJobs
     .filter((job) => {
       const url = canonicalJobUrl(job?.url);
-      return job?.id && url && !dismissed.has(job.id) && !dismissed.has(url);
+      return job?.id && (url || job?.manualRole) && !dismissed.has(job.id) && (!url || !dismissed.has(url));
     })
     .map((job) => ({
       ...job,
@@ -105,20 +106,20 @@ function mergeJobs(existingJobs, incomingJobs, dismissedJobIds = []) {
   const dismissed = new Set(Array.isArray(dismissedJobIds) ? dismissedJobIds : []);
   const usable = (job) => {
     const url = canonicalJobUrl(job?.url);
-    return job && job.id && url && !dismissed.has(job.id) && !dismissed.has(url);
+    return job && job.id && (url || job.manualRole) && !dismissed.has(job.id) && (!url || !dismissed.has(url));
   };
-  const byUrl = new Map(existingJobs.filter(usable).map((job) => [canonicalJobUrl(job.url), {
+  const byUrl = new Map(existingJobs.filter(usable).map((job) => [canonicalJobUrl(job.url) || `manual:${job.id}`, {
     ...job,
     url: canonicalJobUrl(job.url),
     stage: job.stage || 'new',
     verificationStatus: job.verification?.status || job.verificationStatus || 'previously-checked',
   }]));
   incomingJobs.filter(usable).forEach((job) => {
-    const key = canonicalJobUrl(job.url);
+    const key = canonicalJobUrl(job.url) || `manual:${job.id}`;
     const previous = byUrl.get(key);
     byUrl.set(key, {
       ...job,
-      url: key,
+      url: canonicalJobUrl(job.url) || job.url || '',
       ...(previous || {}),
       ...job,
       id: previous?.id || job.id,
@@ -398,7 +399,7 @@ function WorkspaceApp({ user, onLogout, notice = '' }) {
     if (activeCandidate?.id && activeCandidateId !== activeCandidate.id) setActiveCandidateId(activeCandidate.id);
   }, [activeCandidate?.id, activeCandidateId, storageScope]);
 
-  function persistCandidates(nextOrUpdater, nextActiveCandidateId = activeCandidateIdRef.current) {
+  function persistCandidates(nextOrUpdater, nextActiveCandidateId = activeCandidateIdRef.current, { throwOnError = false } = {}) {
     const next = typeof nextOrUpdater === 'function' ? nextOrUpdater(candidatesRef.current) : nextOrUpdater;
     candidatesRef.current = next;
     activeCandidateIdRef.current = nextActiveCandidateId;
@@ -407,14 +408,17 @@ function WorkspaceApp({ user, onLogout, notice = '' }) {
     cacheProfiles(next, nextActiveCandidateId, storageScope);
     setProfileStorageError('');
     setProfileSaveStatus('saving');
-    profileSaveQueue.current = profileSaveQueue.current.catch(() => {}).then(() => api('/api/profiles', {
+    const savePromise = profileSaveQueue.current.catch(() => {}).then(() => api('/api/profiles', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ candidates: next, activeCandidateId: nextActiveCandidateId }),
     })).then(() => setProfileSaveStatus('saved')).catch((error) => {
       setProfileSaveStatus('error');
       setProfileStorageError(`Profiles could not be saved to local disk: ${error.message}`);
+      if (throwOnError) throw error;
     });
+    profileSaveQueue.current = savePromise;
+    return savePromise;
   }
 
   function addCandidate(candidate) {
@@ -497,6 +501,100 @@ function WorkspaceApp({ user, onLogout, notice = '' }) {
       : candidate));
   }
 
+  function saveCandidateCv(candidateId, jobId, content, status, roleDetails = {}) {
+    const previous = candidatesRef.current;
+    const candidateBeforeSave = previous.find((candidate) => candidate.id === candidateId);
+    if (!candidateBeforeSave) return Promise.reject(new Error('The active profile is no longer available. Refresh and choose it again.'));
+    if (jobId && !(candidateBeforeSave.jobs || []).some((job) => job.id === jobId)) return Promise.reject(new Error('That role is no longer available on the active profile. Refresh and choose it again.'));
+    const savedAt = new Date().toISOString();
+    let resolvedJobId = jobId;
+    const nextCv = {
+      content: String(content || ''),
+      status,
+      createdAt: savedAt,
+      updatedAt: savedAt,
+      ...(status === 'approved' ? { approvedAt: savedAt } : { approvedAt: null }),
+      role: {
+        title: String(roleDetails.title || '').trim() || 'Manual role',
+        company: String(roleDetails.company || '').trim(),
+        url: String(roleDetails.url || '').trim(),
+      },
+    };
+    const save = persistCandidates((current) => current.map((candidate) => {
+      if (candidate.id !== candidateId) return candidate;
+      let jobs = Array.isArray(candidate.jobs) ? candidate.jobs : [];
+      if (!resolvedJobId) {
+        resolvedJobId = `manual-job-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        jobs = [...jobs, {
+          id: resolvedJobId,
+          title: nextCv.role.title,
+          company: nextCv.role.company,
+          url: nextCv.role.url,
+          manualRole: true,
+          summary: String(roleDetails.vacancy || '').trim(),
+          vacancyText: String(roleDetails.vacancy || '').trim(),
+          artifacts: { analysis: String(roleDetails.analysis || '').trim() },
+          stage: 'new',
+          firstSeenAt: savedAt,
+        }];
+      }
+      return {
+        ...candidate,
+        jobs: jobs.map((job) => job.id === resolvedJobId
+          ? { ...job, vacancyText: String(roleDetails.vacancy || job.vacancyText || '').trim(), tailoredCv: { ...(job.tailoredCv || {}), ...nextCv, createdAt: job.tailoredCv?.createdAt || savedAt }, updatedAt: savedAt }
+          : job),
+        lastJobId: resolvedJobId,
+        lastWorkflowId: 'prepare-cv',
+        updatedAt: savedAt,
+      };
+    }), activeCandidateIdRef.current, { throwOnError: true });
+    return save.then(() => resolvedJobId).catch((error) => {
+      const current = candidatesRef.current;
+      const rolledBack = current.map((candidate) => {
+        if (candidate.id !== candidateId) return candidate;
+        const beforeJobs = candidateBeforeSave.jobs || [];
+        const beforeJob = beforeJobs.find((job) => job.id === resolvedJobId);
+        const jobs = (candidate.jobs || []).flatMap((job) => {
+          if (job.id !== resolvedJobId) return [job];
+          const attempted = job.tailoredCv?.content === nextCv.content && job.tailoredCv?.status === nextCv.status;
+          return attempted ? (beforeJob ? [beforeJob] : []) : [job];
+        });
+        const hasTarget = (candidate.jobs || []).some((job) => job.id === resolvedJobId);
+        if (!hasTarget && beforeJob) jobs.push(beforeJob);
+        return {
+          ...candidate,
+          jobs,
+          ...(candidate.lastJobId === resolvedJobId ? { lastJobId: candidateBeforeSave.lastJobId || '' } : {}),
+          ...(candidate.lastWorkflowId === 'prepare-cv' && candidateBeforeSave.lastWorkflowId !== 'prepare-cv' ? { lastWorkflowId: candidateBeforeSave.lastWorkflowId || '' } : {}),
+        };
+      });
+      candidatesRef.current = rolledBack;
+      setCandidates(rolledBack);
+      cacheProfiles(rolledBack, activeCandidateIdRef.current, storageScope);
+      throw error;
+    });
+  }
+
+  function saveAnalyzedJob(candidateId, content, vacancy) {
+    const savedAt = new Date().toISOString();
+    const firstLine = String(vacancy || '').split(/\r?\n/).map((line) => line.trim()).find(Boolean) || 'Manual role';
+    const job = {
+      id: `manual-job-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      title: firstLine.replace(/^#+\s*/, '').slice(0, 140),
+      company: '',
+      url: '',
+      manualRole: true,
+      summary: String(vacancy || '').trim(),
+      vacancyText: String(vacancy || '').trim(),
+      artifacts: { analysis: String(content || '') },
+      stage: 'new',
+      firstSeenAt: savedAt,
+    };
+    return persistCandidates((current) => current.map((candidate) => candidate.id === candidateId
+      ? { ...candidate, jobs: [...(candidate.jobs || []), job], lastJobId: job.id, updatedAt: savedAt }
+      : candidate), activeCandidateIdRef.current, { throwOnError: true }).then(() => job.id);
+  }
+
   function restoreBackup(backup) {
     const restored = mergeBackupCandidates(candidatesRef.current, backup);
     const activeId = activeCandidateIdRef.current || restored[0]?.id || '';
@@ -572,7 +670,7 @@ function WorkspaceApp({ user, onLogout, notice = '' }) {
           {notice && <div className="auth-notice workspace-auth-notice">{notice}</div>}
           {profileStorageError && <div className="error-banner"><span>{profileStorageError}</span></div>}
           {page === 'overview' && <Overview onNavigate={navigate} settings={settings} candidates={candidates} activeCandidate={activeCandidate} onSelectCandidate={selectCandidate} />}
-          {page === 'workflows' && <WorkflowStudio settings={settings} activeCandidate={activeCandidate} onWorkflowComplete={completeWorkflow} onUpdateCandidateSites={updateCandidateSites} onUpdateCandidateSalary={updateCandidateSalary} onRemoveCandidateJob={removeCandidateJob} onSelectCandidateJob={selectCandidateJob} onUpdateCandidateJob={updateCandidateJob} onUpdateCandidateJobStage={updateCandidateJobStage} onOpenSettings={() => navigate('settings')} onOpenCandidates={() => navigate('candidates')} />}
+          {page === 'workflows' && <WorkflowStudio settings={settings} activeCandidate={activeCandidate} onWorkflowComplete={completeWorkflow} onSaveAnalyzedJob={saveAnalyzedJob} onSaveCandidateCv={saveCandidateCv} onUpdateCandidateSites={updateCandidateSites} onUpdateCandidateSalary={updateCandidateSalary} onRemoveCandidateJob={removeCandidateJob} onSelectCandidateJob={selectCandidateJob} onUpdateCandidateJob={updateCandidateJob} onUpdateCandidateJobStage={updateCandidateJobStage} onOpenSettings={() => navigate('settings')} onOpenCandidates={() => navigate('candidates')} />}
           {page === 'candidates' && <Candidates candidates={candidates} activeCandidate={activeCandidate} onAddCandidate={addCandidate} onUpdateCandidate={updateCandidate} onSelectCandidate={selectCandidate} onRestoreBackup={restoreBackup} onStart={() => navigate('workflows')} />}
           {page === 'pipeline' && <Pipeline candidates={candidates} onUpdateStage={updateCandidateJobStage} onStart={() => navigate('workflows')} />}
           {page === 'settings' && <SettingsPage settings={settings} setSettings={setSettings} />}
@@ -691,7 +789,7 @@ function Overview({ onNavigate, settings, candidates, activeCandidate, onSelectC
       <PageIntro
         eyebrow="JOB SEARCH CONTROL ROOM"
         title={<>Make the search<br /><span>systematic.</span></>}
-        copy="Nine focused agents turn a resume into a search strategy, application package, and measurable pipeline."
+        copy="Ten focused steps turn a resume into a search strategy, application package, and measurable pipeline."
         action={<button className="button primary" onClick={() => onNavigate('workflows')}><Play size={16} fill="currentColor" /> Continue workflow</button>}
       />
 
@@ -795,7 +893,7 @@ function renderMarkdownInline(value, keyPrefix) {
   return tokens;
 }
 
-function MarkdownOutput({ content }) {
+function MarkdownOutput({ content, fontSize }) {
   const lines = String(content || '').replace(/\r\n?/g, '\n').split('\n');
   const blocks = [];
   let index = 0;
@@ -866,10 +964,10 @@ function MarkdownOutput({ content }) {
     blocks.push(<p key={`paragraph-${index}`}>{paragraphLines.map((paragraphLine, paragraphIndex) => <span key={`paragraph-line-${paragraphIndex}`}>{renderMarkdownInline(paragraphLine, `paragraph-${index}-${paragraphIndex}`)}{paragraphIndex < paragraphLines.length - 1 && <br />}</span>)}</p>);
   }
 
-  return <div className="markdown-output">{blocks}</div>;
+  return <div className="markdown-output" style={fontSize ? { '--markdown-size': `${fontSize}px` } : undefined}>{blocks}</div>;
 }
 
-function WorkflowStudio({ settings, activeCandidate, onWorkflowComplete, onUpdateCandidateSites, onUpdateCandidateSalary, onRemoveCandidateJob, onSelectCandidateJob, onUpdateCandidateJob, onUpdateCandidateJobStage, onOpenSettings, onOpenCandidates }) {
+function WorkflowStudio({ settings, activeCandidate, onWorkflowComplete, onSaveAnalyzedJob, onSaveCandidateCv, onUpdateCandidateSites, onUpdateCandidateSalary, onRemoveCandidateJob, onSelectCandidateJob, onUpdateCandidateJob, onUpdateCandidateJobStage, onOpenSettings, onOpenCandidates }) {
   const [selected, setSelected] = useState(() => lastWorkflowFor(activeCandidate));
   const [input, setInput] = useState('');
   const [output, setOutput] = useState('');
@@ -890,6 +988,13 @@ function WorkflowStudio({ settings, activeCandidate, onWorkflowComplete, onUpdat
   const salaryInferenceAttempted = useRef(new Set());
   const [runState, setRunState] = useState({ status: 'idle' });
   const [completionNotice, setCompletionNotice] = useState(null);
+  const [cvFontSize, setCvFontSize] = useState(16);
+  const [outputFontSize, setOutputFontSize] = useState(16);
+  const [cvSaveState, setCvSaveState] = useState('');
+  const [cvActionLoading, setCvActionLoading] = useState(false);
+  const activeCandidateIdRef = useRef(activeCandidate?.id || '');
+  const selectedWorkflowIdRef = useRef(selected.id);
+  const selectedJobIdRef = useRef(selectedJobId);
   const completionTimer = useRef(null);
   const runController = useRef(null);
   const activeSearchSources = [
@@ -903,7 +1008,12 @@ function WorkflowStudio({ settings, activeCandidate, onWorkflowComplete, onUpdat
   const jobSearchReady = profileReady && searchConfigReady;
   const savedJobs = activeCandidate?.jobs || [];
   const selectedJob = savedJobs.find((job) => job.id === selectedJobId) || null;
+  const selectedCv = selectedJob?.tailoredCv || null;
   const nextCompletedWorkflow = runState.status === 'complete' ? nextWorkflowFor(WORKFLOWS, selected.id) : null;
+
+  useEffect(() => { activeCandidateIdRef.current = activeCandidate?.id || ''; }, [activeCandidate?.id]);
+  useEffect(() => { selectedWorkflowIdRef.current = selected.id; }, [selected.id]);
+  useEffect(() => { selectedJobIdRef.current = selectedJobId; }, [selectedJobId]);
 
   function candidateSourceFor(workflowId) {
     if (!activeCandidate) return '';
@@ -919,9 +1029,61 @@ function WorkflowStudio({ settings, activeCandidate, onWorkflowComplete, onUpdat
     setUploadedFile(null);
     setCustomSiteDraft('');
     setCustomSiteError('');
-    setSelectedJobId('');
-    setRunState({ status: 'idle' });
+    const preserveRole = ['prepare-cv', 'write-cover-letter', 'interview-prep', 'mark-submitted'].includes(workflow.id);
+    const nextJobId = preserveRole ? selectedJobId : '';
+    setSelectedJobId(nextJobId);
+    selectedJobIdRef.current = nextJobId;
+    selectedWorkflowIdRef.current = workflow.id;
+    const nextJob = savedJobs.find((job) => job.id === nextJobId);
+    if (nextJob && ['prepare-cv', 'write-cover-letter', 'interview-prep', 'mark-submitted'].includes(workflow.id)) {
+      setInput(nextJob.vacancyText || [`${nextJob.title}${nextJob.company ? ` — ${nextJob.company}` : ''}`, nextJob.url, nextJob.summary].filter(Boolean).join('\n\n'));
+      if (workflow.id === 'prepare-cv') setOutput(nextJob.tailoredCv?.content || '');
+    }
+    setRunState(workflow.id === 'prepare-cv' && nextJob?.tailoredCv?.content
+      ? { status: nextJob.tailoredCv.status === 'draft' ? 'draft' : 'complete', workflow: workflow.title, finishedAt: new Date(nextJob.tailoredCv.updatedAt || Date.now()) }
+      : { status: 'idle' });
     setCompletionNotice(null);
+    setCvSaveState('');
+  }
+
+  async function applyForRole() {
+    const workflow = WORKFLOWS.find((item) => item.id === 'prepare-cv');
+    if (!workflow || !activeCandidate?.id) {
+      setError('Choose an active profile before preparing a CV.');
+      return;
+    }
+    setCvActionLoading(true);
+    setError('');
+    const actionCandidateId = activeCandidate.id;
+    const actionJobId = selectedJob?.id || '';
+    const actionOutput = output;
+    const actionInput = input;
+    let roleId = actionJobId;
+    try {
+      if (!roleId) roleId = await onSaveAnalyzedJob(actionCandidateId, actionOutput, actionInput);
+    } catch (saveError) {
+      setError(`The role could not be saved: ${saveError.message}`);
+      setCvActionLoading(false);
+      return;
+    }
+    if (activeCandidateIdRef.current !== actionCandidateId || selectedWorkflowIdRef.current !== 'add-job' || selectedJobIdRef.current !== actionJobId) {
+      setCvActionLoading(false);
+      return;
+    }
+    window.clearTimeout(completionTimer.current);
+    setSelected(workflow);
+    selectedWorkflowIdRef.current = workflow.id;
+    setSelectedJobId(roleId);
+    selectedJobIdRef.current = roleId;
+    const role = savedJobs.find((job) => job.id === roleId);
+    setInput(role?.vacancyText || actionInput || '');
+    setOutput(role?.tailoredCv?.content || '');
+    setRunState(role?.tailoredCv?.content
+      ? { status: role.tailoredCv.status === 'draft' ? 'draft' : 'complete', workflow: workflow.title, finishedAt: new Date(role.tailoredCv.updatedAt || Date.now()) }
+      : { status: 'idle' });
+    setCompletionNotice(null);
+    setCvSaveState('');
+    setCvActionLoading(false);
   }
 
   useEffect(() => () => { window.clearTimeout(completionTimer.current); runController.current?.abort(); }, []);
@@ -938,10 +1100,16 @@ function WorkflowStudio({ settings, activeCandidate, onWorkflowComplete, onUpdat
     setCustomSiteError('');
     setSelected(persistedWorkflow);
     setSelectedJobId(activeCandidate?.lastJobId || '');
-    setOutput(persistedOutput);
-    setRunState(persistedOutput ? { status: 'complete', workflow: persistedWorkflow.title, finishedAt: new Date() } : { status: 'idle' });
     const persistedJob = (activeCandidate?.jobs || []).find((job) => job.id === activeCandidate?.lastJobId);
-    setInput(persistedJob ? [`${persistedJob.title}${persistedJob.company ? ` — ${persistedJob.company}` : ''}`, persistedJob.url, persistedJob.summary].filter(Boolean).join('\n\n') : candidateSourceFor(persistedWorkflow.id));
+    setOutput(persistedWorkflow.id === 'prepare-cv' ? (persistedJob ? (persistedJob.tailoredCv?.content || '') : persistedOutput) : persistedOutput);
+    const persistedCvStatus = persistedJob?.tailoredCv?.status;
+    setRunState(persistedWorkflow.id === 'prepare-cv' && persistedCvStatus === 'draft'
+      ? { status: 'draft', workflow: persistedWorkflow.title, finishedAt: new Date() }
+      : (persistedOutput || persistedJob?.tailoredCv?.content ? { status: 'complete', workflow: persistedWorkflow.title, finishedAt: new Date() } : { status: 'idle' }));
+    setInput(persistedJob ? (persistedWorkflow.id === 'prepare-cv'
+      ? (persistedJob.vacancyText || persistedJob.summary || '')
+      : [`${persistedJob.title}${persistedJob.company ? ` — ${persistedJob.company}` : ''}`, persistedJob.url, persistedJob.summary].filter(Boolean).join('\n\n')) : candidateSourceFor(persistedWorkflow.id));
+    setCvSaveState('');
   }, [activeCandidate?.id, activeCandidate?.lastWorkflowId]);
 
   useEffect(() => {
@@ -1016,12 +1184,28 @@ function WorkflowStudio({ settings, activeCandidate, onWorkflowComplete, onUpdat
 
   function chooseJob(jobId) {
     setSelectedJobId(jobId);
+    selectedJobIdRef.current = jobId;
     if (activeCandidate) onSelectCandidateJob(activeCandidate.id, jobId);
     const job = savedJobs.find((item) => item.id === jobId);
-    if (!job) return;
+    if (!job) {
+      setInput('');
+      setOutput('');
+      setRunState({ status: 'idle' });
+      setCvSaveState('');
+      return;
+    }
     setSubmissionStage(job.stage && job.stage !== 'new' ? job.stage : 'submitted');
-    setInput([`${job.title}${job.company ? ` — ${job.company}` : ''}`, job.url, job.summary].filter(Boolean).join('\n\n'));
+    setInput(selected.id === 'prepare-cv'
+      ? (job.vacancyText || job.summary || '')
+      : [`${job.title}${job.company ? ` — ${job.company}` : ''}`, job.url, job.summary].filter(Boolean).join('\n\n'));
+    if (selected.id === 'prepare-cv') setOutput(job.tailoredCv?.content || '');
+    if (selected.id === 'prepare-cv') setRunState(job.tailoredCv?.content ? { status: job.tailoredCv.status === 'draft' ? 'draft' : 'complete', workflow: selected.title, finishedAt: new Date(job.tailoredCv.updatedAt || Date.now()) } : { status: 'idle' });
+    if (selected.id === 'add-job') {
+      setOutput(job.artifacts?.analysis || '');
+      setRunState(job.artifacts?.analysis ? { status: 'complete', workflow: selected.title, finishedAt: new Date() } : { status: 'idle' });
+    }
     setError('');
+    setCvSaveState('');
     if (selected.id === 'add-job' && !job.summary) {
       setSummaryLoading(true);
       api('/api/summarize-job', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url: job.url }) })
@@ -1036,7 +1220,11 @@ function WorkflowStudio({ settings, activeCandidate, onWorkflowComplete, onUpdat
     onRemoveCandidateJob(activeCandidate.id, jobId);
     if (selectedJobId === jobId) {
       setSelectedJobId('');
+      selectedJobIdRef.current = '';
       setInput('');
+      setOutput('');
+      setRunState({ status: 'idle' });
+      setCompletionNotice(null);
     }
   }
 
@@ -1045,6 +1233,9 @@ function WorkflowStudio({ settings, activeCandidate, onWorkflowComplete, onUpdat
     const controller = new AbortController();
     runController.current = controller;
     const runCandidateId = activeCandidate?.id || '';
+    const runWorkflowId = selected.id;
+    const runJobId = selectedJobId;
+    const isCurrentRunContext = (resolvedJobId = runJobId) => activeCandidateIdRef.current === runCandidateId && selectedWorkflowIdRef.current === runWorkflowId && (selectedJobIdRef.current === runJobId || (resolvedJobId && selectedJobIdRef.current === resolvedJobId));
     setLoading(true);
     setError('');
     setOutput('');
@@ -1052,6 +1243,12 @@ function WorkflowStudio({ settings, activeCandidate, onWorkflowComplete, onUpdat
     window.clearTimeout(completionTimer.current);
     setCompletionNotice(null);
     setRunState({ status: 'running', workflow: selected.title });
+    if (selected.id === 'prepare-cv' && (!activeCandidate || !activeCandidate.resumeText)) {
+      setError('Choose an active profile with an actual saved CV before preparing a tailored CV.');
+      setRunState({ status: 'failed', workflow: selected.title });
+      setLoading(false);
+      return;
+    }
     if (selected.id === 'mark-submitted' || selected.id === 'job-stats') {
       const finishedAt = new Date();
       if (selected.id === 'mark-submitted') {
@@ -1083,8 +1280,14 @@ function WorkflowStudio({ settings, activeCandidate, onWorkflowComplete, onUpdat
     const savedWorkflowContext = selected.id === 'find-me-a-job'
       ? `\n\nSTEP 1 — SAVED PROFILE\n${savedProfileOutput || 'Use the saved CV and profile details above.'}\n\nSTEP 2 — SAVED SEARCH CONFIGURATION\n${savedSearchConfig}`
       : '';
+    const tailoredCvContext = selected.id === 'write-cover-letter' && selectedJob?.tailoredCv?.status === 'approved'
+      ? `\n\nAPPROVED TAILORED CV FOR THIS ROLE\n${selectedJob.tailoredCv.content}`
+      : '';
+    const prepareCvContext = selected.id === 'prepare-cv'
+      ? `\n\nVACANCY FOR THIS ROLE\n${input}\n\nSAVED ROLE ANALYSIS\n${selectedJob?.artifacts?.analysis || 'No saved analysis is available; use only the vacancy and original CV.'}`
+      : '';
     const candidateContext = activeCandidate
-      ? `ACTIVE PROFILE\nName: ${activeCandidate.name}\nTarget roles: ${activeCandidate.targetRoles.join(', ')}\nSalary expectation: ${activeCandidate.salaryExpectationEur ? `€${Number(activeCandidate.salaryExpectationEur).toLocaleString('en-IE')} gross per year` : 'not specified'}\nCV file: ${activeCandidate.resumeFilename || 'pasted text'}\n\nCV CONTENT\n${activeCandidate.resumeText}${savedWorkflowContext}\n\nWORKFLOW INPUT\n${input || 'Use the saved workflow information above.'}`
+      ? `ACTIVE PROFILE\nName: ${activeCandidate.name}\nTarget roles: ${activeCandidate.targetRoles.join(', ')}\nSalary expectation: ${activeCandidate.salaryExpectationEur ? `€${Number(activeCandidate.salaryExpectationEur).toLocaleString('en-IE')} gross per year` : 'not specified'}\nCV file: ${activeCandidate.resumeFilename || 'pasted text'}\n\nORIGINAL CV CONTENT\n${activeCandidate.resumeText}${savedWorkflowContext}${tailoredCvContext}${prepareCvContext}\n\nWORKFLOW INPUT\n${input || 'Use the saved workflow information above.'}`
       : input;
     try {
       const result = await api('/api/run-command', {
@@ -1099,14 +1302,37 @@ function WorkflowStudio({ settings, activeCandidate, onWorkflowComplete, onUpdat
           salaryExpectationEur: selected.id === 'find-me-a-job' ? activeCandidate?.salaryExpectationEur || null : null,
         }),
       });
+      let completedJobId = runJobId;
+      if (selected.id === 'prepare-cv') {
+        const firstLine = String(input || '').split(/\r?\n/).map((line) => line.trim()).find(Boolean) || '';
+        completedJobId = await onSaveCandidateCv(runCandidateId, runJobId, result.content, 'draft', {
+          title: selectedJob?.title || firstLine.replace(/^#+\s*/, '').slice(0, 140) || 'Manual role',
+          company: selectedJob?.company || '',
+          url: selectedJob?.url || '',
+          vacancy: result.vacancyText || input,
+          analysis: selectedJob?.artifacts?.analysis || '',
+        });
+      } else if (selected.id === 'add-job' && !runJobId) {
+        completedJobId = await onSaveAnalyzedJob(runCandidateId, result.content, input);
+      }
+      if (!isCurrentRunContext(completedJobId)) return;
       setOutput(result.content);
       setRunMeta({ model: result.model, tokens: result.usage?.total_tokens, sourceResults: result.sourceResults || [] });
+      if (completedJobId && completedJobId !== runJobId) {
+        setSelectedJobId(completedJobId);
+        selectedJobIdRef.current = completedJobId;
+      }
       const finishedAt = new Date();
+      if (selected.id === 'prepare-cv') {
+        setRunState({ status: 'draft', workflow: selected.title, finishedAt });
+        setCvSaveState('Draft generated. Edit it, save your changes, then approve the CV explicitly.');
+        return;
+      }
       const nextWorkflow = nextWorkflowFor(WORKFLOWS, selected.id);
       setRunState({ status: 'complete', workflow: selected.title, finishedAt });
       setCompletionNotice({ workflow: selected.title, nextWorkflow, finishedAt });
       const parsedJobs = selected.id === 'find-me-a-job' ? jobsFromSearchResult(result) : [];
-      onWorkflowComplete(selected.id, result.content, parsedJobs, selectedJobId, runCandidateId);
+      onWorkflowComplete(selected.id, result.content, parsedJobs, completedJobId, runCandidateId);
       if (selected.id === 'mark-submitted' && selectedJobId && runCandidateId) onUpdateCandidateJobStage(runCandidateId, selectedJobId, submissionStage);
       completionTimer.current = window.setTimeout(() => setCompletionNotice(null), 12000);
     } catch (err) {
@@ -1114,8 +1340,8 @@ function WorkflowStudio({ settings, activeCandidate, onWorkflowComplete, onUpdat
         setError('The run was cancelled.');
         setRunState({ status: 'failed', workflow: selected.title });
       } else {
-      setError(err.message);
-      setRunState({ status: 'failed', workflow: selected.title });
+        setError(err.message);
+        setRunState({ status: 'failed', workflow: selected.title });
       }
     } finally {
       if (runController.current === controller) runController.current = null;
@@ -1127,6 +1353,45 @@ function WorkflowStudio({ settings, activeCandidate, onWorkflowComplete, onUpdat
     await navigator.clipboard.writeText(output);
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
+  }
+
+  async function saveCv(status) {
+    if (!activeCandidate?.id || !output.trim()) {
+      setCvSaveState('Write or generate the CV before saving it.');
+      return;
+    }
+    setCvActionLoading(true);
+    setCvSaveState(status === 'approved' ? 'Approving…' : 'Saving draft…');
+    setError('');
+    const actionCandidateId = activeCandidate.id;
+    const actionJobId = selectedJobId;
+    const actionContent = output;
+    try {
+      const firstLine = String(input || '').split(/\r?\n/).map((line) => line.trim()).find(Boolean) || '';
+      const resolvedJobId = await onSaveCandidateCv(actionCandidateId, actionJobId, actionContent, status, {
+        title: selectedJob?.title || firstLine.replace(/^#+\s*/, '').slice(0, 140) || 'Manual role',
+        company: selectedJob?.company || '',
+        url: selectedJob?.url || '',
+        vacancy: selectedJob?.vacancyText || input,
+        analysis: selectedJob?.artifacts?.analysis || '',
+      });
+      if (activeCandidateIdRef.current !== actionCandidateId || selectedWorkflowIdRef.current !== 'prepare-cv' || (selectedJobIdRef.current !== actionJobId && selectedJobIdRef.current !== resolvedJobId)) return;
+      setSelectedJobId(resolvedJobId);
+      selectedJobIdRef.current = resolvedJobId;
+      if (status === 'approved') {
+        onWorkflowComplete('prepare-cv', actionContent, [], resolvedJobId, actionCandidateId);
+        setRunState({ status: 'complete', workflow: 'Prepare CV', finishedAt: new Date() });
+        setCompletionNotice({ workflow: 'Prepare CV', nextWorkflow: nextWorkflowFor(WORKFLOWS, 'prepare-cv'), finishedAt: new Date() });
+        setCvSaveState(`Approved and saved at ${new Date().toLocaleTimeString()}.`);
+      } else {
+        setCvSaveState(`Draft saved at ${new Date().toLocaleTimeString()}.`);
+      }
+    } catch (saveError) {
+      setCvSaveState('');
+      setError(`CV ${status === 'approved' ? 'approval' : 'save'} failed: ${saveError.message}`);
+    } finally {
+      setCvActionLoading(false);
+    }
   }
 
   return (
@@ -1180,7 +1445,7 @@ function WorkflowStudio({ settings, activeCandidate, onWorkflowComplete, onUpdat
               <div className="upload-divider"><span>OR PASTE BELOW</span></div>
             </div>
           )}
-          {selected.id !== 'add-job' && <><label className="field-label" htmlFor="agent-input"><span>{selected.id === 'find-me-a-job' ? 'ADDITIONAL SEARCH NOTES (OPTIONAL)' : 'SOURCE MATERIAL'}</span>{activeCandidate && ['setup-candidate', 'build-search-config'].includes(selected.id) && input === activeCandidate.resumeText && <strong>LOADED FROM {activeCandidate.name.toUpperCase()}'S CV</strong>}</label><textarea id="agent-input" value={input} onChange={(event) => setInput(event.target.value)} placeholder={selected.placeholder} rows={selected.id === 'find-me-a-job' ? 4 : 12} /></>}
+          {<><label className="field-label" htmlFor="agent-input"><span>{selected.id === 'find-me-a-job' ? 'ADDITIONAL SEARCH NOTES (OPTIONAL)' : selected.id === 'add-job' ? 'VACANCY / ROLE DETAILS' : selected.id === 'prepare-cv' ? 'VACANCY / ROLE DETAILS' : 'SOURCE MATERIAL'}</span>{activeCandidate && ['setup-candidate', 'build-search-config'].includes(selected.id) && input === activeCandidate.resumeText && <strong>LOADED FROM {activeCandidate.name.toUpperCase()}'S CV</strong>}</label><textarea id="agent-input" value={input} onChange={(event) => setInput(event.target.value)} placeholder={selected.placeholder} rows={selected.id === 'find-me-a-job' ? 4 : 12} /></>}
           {selected.id === 'find-me-a-job' && (
             <>
               <div className="salary-expectation">
@@ -1204,7 +1469,7 @@ function WorkflowStudio({ settings, activeCandidate, onWorkflowComplete, onUpdat
               </div>
             </>
           )}
-          {['add-job', 'write-cover-letter', 'mark-submitted'].includes(selected.id) && (
+          {['add-job', 'prepare-cv', 'write-cover-letter', 'mark-submitted'].includes(selected.id) && (
             <div className={`job-picker ${selected.id === 'add-job' ? 'analyze-job-picker' : ''}`}>
               <label className="field-label" htmlFor="saved-job-select"><span>JOBS FOUND IN STEP 3</span><strong>{savedJobs.length} SAVED</strong></label>
               <select id="saved-job-select" value={selectedJobId} onChange={(event) => chooseJob(event.target.value)} disabled={!savedJobs.length}>
@@ -1215,31 +1480,34 @@ function WorkflowStudio({ settings, activeCandidate, onWorkflowComplete, onUpdat
               <small>{savedJobs.length ? 'Select a posting to load its details below.' : 'Start the Step 3 job search to populate this list for the active profile.'}</small>
               {selected.id === 'mark-submitted' && selectedJob && <div className="selected-job-details"><div className="selected-job-details-heading"><span className="eyebrow">APPLICATION STATUS</span></div><h3>{selectedJob.title}</h3><label className="field-label" htmlFor="submission-stage">SET STAGE</label><select id="submission-stage" value={submissionStage} onChange={(event) => setSubmissionStage(event.target.value)}><option value="submitted">Submitted</option><option value="interviewing">Interviewing</option><option value="offered">Offered</option><option value="rejected">Rejected</option><option value="withdrawn">Withdrawn</option></select><small>Running this step saves the selected stage to the local application pipeline.</small></div>}
               {selected.id === 'add-job' && <div className="selected-job-details"><div className="selected-job-details-heading"><span className="eyebrow">SELECTED JOB</span>{selectedJob && <span className="selected-job-state">{summaryLoading ? 'SUMMARIZING…' : 'READY TO ANALYZE'}</span>}</div>{selectedJob ? <><h3>{selectedJob.title}</h3>{selectedJob.company && <p className="selected-job-company">{selectedJob.company}</p>}<a href={selectedJob.url} target="_blank" rel="noreferrer">{selectedJob.url} <ArrowRight size={13} /></a><div className="selected-job-summary">{summaryLoading ? 'Reading the posting and preparing a summary…' : (selectedJob.summary || 'No summary was returned. Open the posting link to review the full role description.')}</div></> : <div className="selected-job-empty">Choose a job above to view its role details and prepare it for analysis.</div>}</div>}
+              {selected.id === 'prepare-cv' && <div className="selected-job-details"><div className="selected-job-details-heading"><span className="eyebrow">ROLE FOR TAILORING</span><span className="selected-job-state">{selectedCv?.status === 'approved' ? 'APPROVED CV SAVED' : selectedCv ? 'DRAFT CV SAVED' : 'READY TO PREPARE'}</span></div>{selectedJob ? <><h3>{selectedJob.title}</h3>{selectedJob.company && <p className="selected-job-company">{selectedJob.company}</p>}{selectedJob.url && <a href={selectedJob.url} target="_blank" rel="noreferrer">{selectedJob.url} <ArrowRight size={13} /></a>}<div className="selected-job-summary">The original CV remains unchanged. Edit the tailored draft below, then explicitly approve it when it is ready.</div></> : <div className="selected-job-empty">Select a saved role, or paste a vacancy above to create a role record when the CV draft is generated.</div>}</div>}
             </div>
           )}
           {error && <div className="error-banner"><span>{error}</span>{!settings.apiKeyConfigured && <button onClick={onOpenSettings}>Open settings</button>}</div>}
           <div className="runner-actions">
             <div className="runner-model"><span className="model-pulse" /><span>RUNNING ON</span><strong>{settings.model}</strong></div>
             {loading && <button className="button secondary" onClick={() => runController.current?.abort()}>Cancel</button>}
-            <button className="button primary" onClick={run} disabled={loading || (selected.id === 'find-me-a-job' ? !jobSearchReady : (!input.trim() && !activeCandidate?.resumeText))}>{loading ? <RefreshCw className="spin" size={16} /> : <Play size={16} fill="currentColor" />}{loading ? (selected.id === 'find-me-a-job' ? 'Searching…' : 'Running…') : (selected.id === 'find-me-a-job' ? 'Start job search' : 'Run agent')}</button>
+            <button className="button primary" onClick={run} disabled={loading || (selected.id === 'find-me-a-job' ? !jobSearchReady : ['add-job', 'prepare-cv'].includes(selected.id) ? ((!input.trim() && !selectedJob) || (selected.id === 'prepare-cv' && !profileReady)) : (!input.trim() && !activeCandidate?.resumeText))}>{loading ? <RefreshCw className="spin" size={16} /> : <Play size={16} fill="currentColor" />}{loading ? (selected.id === 'find-me-a-job' ? 'Searching…' : 'Running…') : (selected.id === 'find-me-a-job' ? 'Start job search' : 'Run agent')}</button>
           </div>
           {runState.status !== 'idle' && (
             <div className={`process-status ${runState.status}`} role="status" aria-live="polite">
               <span className="process-status-icon">
                 {runState.status === 'running' && <RefreshCw className="spin" size={18} />}
                 {runState.status === 'complete' && <CircleCheckBig size={19} />}
+                {runState.status === 'draft' && <FileText size={19} />}
                 {runState.status === 'failed' && <X size={19} />}
               </span>
               <span className="process-status-copy">
-                <strong>{runState.status === 'running' ? 'Agent is running' : runState.status === 'complete' ? 'Process finished' : 'Process stopped'}</strong>
+                <strong>{runState.status === 'running' ? 'Agent is running' : runState.status === 'complete' ? 'Process finished' : runState.status === 'draft' ? 'Draft ready for review' : 'Process stopped'}</strong>
                 <small>
                   {runState.status === 'running' && `${runState.workflow} is processing the source material.`}
                   {runState.status === 'complete' && `${runState.workflow} completed at ${runState.finishedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}.`}
+                  {runState.status === 'draft' && 'Edit the tailored CV, save your draft, and approve it explicitly when ready.'}
                   {runState.status === 'failed' && 'The agent did not finish. Review the error above and run it again.'}
                 </small>
               </span>
               <span className="process-status-actions">
-                <span className="process-status-label">{runState.status === 'running' ? 'IN PROGRESS' : runState.status === 'complete' ? 'COMPLETED' : 'FAILED'}</span>
+                <span className="process-status-label">{runState.status === 'running' ? 'IN PROGRESS' : runState.status === 'complete' ? 'COMPLETED' : runState.status === 'draft' ? 'DRAFT' : 'FAILED'}</span>
                 {nextCompletedWorkflow && <button type="button" className="process-status-next" onClick={() => chooseWorkflow(nextCompletedWorkflow)}>Next step <ArrowRight size={14} /></button>}
               </span>
             </div>
@@ -1250,9 +1518,19 @@ function WorkflowStudio({ settings, activeCandidate, onWorkflowComplete, onUpdat
         <section className={`output-panel panel output-${selected.id}`}>
           <div className="panel-heading">
             <div><span className="eyebrow">AGENT OUTPUT</span><h2>{selected.title}</h2></div>
-            {output && <div className="output-heading-actions"><span className="complete-badge"><CircleCheckBig size={15} /> Completed</span><button className="button secondary compact" onClick={copyOutput}>{copied ? <Check size={15} /> : <Copy size={15} />}{copied ? 'Copied' : 'Copy'}</button></div>}
+            {output && <div className="output-heading-actions">{selected.id !== 'prepare-cv' && <div className="cv-font-controls" aria-label="Output font size"><button type="button" onClick={() => setOutputFontSize((size) => Math.max(14, size - 1))} disabled={outputFontSize <= 14} aria-label="Decrease output font size">A−</button><span>{outputFontSize}px</span><button type="button" onClick={() => setOutputFontSize((size) => Math.min(20, size + 1))} disabled={outputFontSize >= 20} aria-label="Increase output font size">A+</button></div>}<span className="complete-badge">{selected.id === 'prepare-cv' && runState.status !== 'complete' ? <FileText size={15} /> : <CircleCheckBig size={15} />} {selected.id === 'prepare-cv' && runState.status !== 'complete' ? 'Draft' : 'Completed'}</span><button className="button secondary compact" onClick={copyOutput}>{copied ? <Check size={15} /> : <Copy size={15} />}{copied ? 'Copied' : 'Copy'}</button></div>}
           </div>
-          {loading ? <div className="output-loading"><span /><span /><span /></div> : selected.id !== 'find-me-a-job' && <MarkdownOutput content={output} />}
+          {loading ? <div className="output-loading"><span /><span /><span /></div> : selected.id !== 'find-me-a-job' && <>
+            {selected.id === 'prepare-cv' && output && <div className="cv-editor-panel">
+              <div className="cv-editor-heading"><span className="eyebrow">EDITABLE TAILORED CV</span><div className="cv-font-controls" aria-label="CV font size"><button type="button" onClick={() => setCvFontSize((size) => Math.max(14, size - 1))} disabled={cvFontSize <= 14} aria-label="Decrease CV font size">A−</button><span>{cvFontSize}px</span><button type="button" onClick={() => setCvFontSize((size) => Math.min(20, size + 1))} disabled={cvFontSize >= 20} aria-label="Increase CV font size">A+</button></div></div>
+              <textarea className="cv-editor" style={{ fontSize: `${cvFontSize}px` }} value={output} disabled={cvActionLoading} onChange={(event) => { setOutput(event.target.value); setCvSaveState('Unsaved edits'); setRunState({ status: 'draft', workflow: selected.title }); setCompletionNotice(null); }} aria-label="Editable tailored CV" />
+              <div className="cv-actions"><button type="button" className="button secondary compact" onClick={() => saveCv('draft')} disabled={cvActionLoading || !output.trim()}>{cvActionLoading ? <RefreshCw className="spin" size={14} /> : <FileText size={14} />} Save draft</button><button type="button" className="button primary compact" onClick={() => saveCv('approved')} disabled={cvActionLoading || !output.trim()}>{cvActionLoading ? <RefreshCw className="spin" size={14} /> : <Check size={14} />} Approve CV</button>{cvSaveState && <small role="status">{cvSaveState}</small>}</div>
+              <div className="cv-preview-label"><span className="eyebrow">PREVIEW</span><small>Review the rendered CV before saving or approving.</small></div>
+              <MarkdownOutput content={output} fontSize={cvFontSize} />
+            </div>}
+            {selected.id !== 'prepare-cv' && <MarkdownOutput content={output} fontSize={outputFontSize} />}
+          </>}
+          {!loading && selected.id === 'add-job' && output && selectedJob && runState.status === 'complete' && <div className="apply-role-footer"><button className="button primary" onClick={applyForRole}><FileCheck size={16} /> Apply for this role <ArrowRight size={15} /></button><small>Next: prepare an editable, role-specific CV from the saved original.</small></div>}
           {!loading && selected.id === 'find-me-a-job' && savedJobs.length > 0 && (
             <div className="found-role-links">
               <div className="found-role-links-heading"><span className="eyebrow">ROLES FOUND</span><strong>{savedJobs.length} SAVED · {savedJobs.filter((job) => (job.verification?.status || job.verificationStatus) === 'page-fetched').length} PAGES FETCHED</strong></div>

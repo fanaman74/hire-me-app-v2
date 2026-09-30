@@ -37,6 +37,7 @@ const commandNames = new Set([
   'build-search-config',
   'find-me-a-job',
   'add-job',
+  'prepare-cv',
   'write-cover-letter',
   'interview-prep',
   'mark-submitted',
@@ -715,6 +716,7 @@ app.post('/api/run-command', async (req, res) => {
     let sourceResults = [];
     let allAgentResults = [];
     let userInput = input;
+    let vacancyText = '';
     if (command === 'setup-candidate') {
       userInput = `Set up a job-search profile from the resume content below. The resume has already been read, so do not ask for a --resume path. Return the structured profile and recommended next steps directly.\n\n${input}`;
     }
@@ -729,6 +731,16 @@ app.post('/api/run-command', async (req, res) => {
         : `LIVE JOB POSTING\n${jobUrl ? `The posting could not be fetched (${posting?.text || 'unreachable'}).` : 'No direct posting URL was supplied.'} Use only the saved job summary and CV below, and clearly identify missing evidence.`;
       prompt = `You are a careful job-fit analyst. Do not call or describe tools. Analyze only the candidate evidence and job-posting evidence supplied by the user. Return a concise, practical Markdown report with exactly these sections:\n\n# Role breakdown\nExplain the purpose, seniority, main responsibilities, working arrangement, and compensation when stated.\n\n# What the employer needs\nList the essential requirements and important preferences.\n\n# Compatibility analysis\nUse a table with Requirement, Candidate evidence, and Match (Strong, Partial, or Gap). Never invent candidate experience.\n\n# Why this candidate is compatible\nExplain the strongest evidence-based reasons in plain language.\n\n# Gaps and risks\nIdentify missing or weak evidence and whether each gap appears manageable.\n\n# Application recommendation\nGive a fit score out of 100, a clear Apply / Consider / Skip recommendation, and 3 points the candidate should emphasize when applying.`;
       userInput = `${postingEvidence}\n\nCANDIDATE AND SAVED JOB CONTEXT\n${input}`;
+    }
+    if (command === 'prepare-cv') {
+      const jobUrl = requestedJobUrl || '';
+      const posting = jobUrl ? await fetchCustomSite(jobUrl, { signal: requestController.signal }) : null;
+      vacancyText = posting?.ok && posting.text ? posting.text.slice(0, 24000) : '';
+      const postingEvidence = posting?.ok && posting.text
+        ? `LIVE VACANCY\nURL: ${jobUrl}\nFetched successfully immediately before tailoring.\n\n${posting.text.slice(0, 24000)}`
+        : `LIVE VACANCY\n${jobUrl ? `The posting could not be fetched (${posting?.text || 'unreachable'}).` : 'No direct posting URL was supplied.'} Use the pasted vacancy below and clearly identify missing evidence.`;
+      userInput = `${postingEvidence}\n\nORIGINAL CV, ROLE ANALYSIS, AND PASTED VACANCY CONTEXT\n${input}`;
+      prompt = `${prompt}\n\nIf live vacancy evidence is unavailable, tailor only from the pasted vacancy and explicitly note missing evidence after the CV.`;
     }
     if (command === 'find-me-a-job') {
       customResults = candidateSites.length
@@ -869,6 +881,7 @@ app.post('/api/run-command', async (req, res) => {
       usage: payload.usage ? { ...payload.usage, total_tokens: totalTokens, source_total_tokens: sourceUsageTotal } : (sourceUsageTotal ? { total_tokens: sourceUsageTotal, source_total_tokens: sourceUsageTotal } : null),
       jobs,
       sourceResults,
+      ...(command === 'prepare-cv' ? { vacancyText } : {}),
     });
   } catch (error) {
     const result = apiError(error, 'Agent run failed');
