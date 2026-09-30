@@ -1215,6 +1215,24 @@ function WorkflowStudio({ settings, activeCandidate, onWorkflowComplete, onSaveA
     }
   }
 
+  function analyzeSavedJob(job) {
+    if (!job || loading || !activeCandidate) return;
+    const workflow = WORKFLOWS.find((item) => item.id === 'add-job');
+    const roleInput = [`${job.title}${job.company ? ` — ${job.company}` : ''}`, job.url, job.summary].filter(Boolean).join('\n\n');
+    setSelected(workflow);
+    selectedWorkflowIdRef.current = workflow.id;
+    setSelectedJobId(job.id);
+    selectedJobIdRef.current = job.id;
+    onSelectCandidateJob(activeCandidate.id, job.id);
+    setInput(roleInput);
+    setOutput('');
+    setRunMeta(null);
+    setError('');
+    setCompletionNotice(null);
+    setRunState({ status: 'idle' });
+    void run({ workflowOverride: workflow, jobIdOverride: job.id, inputOverride: roleInput });
+  }
+
   function markJobNotInterested(jobId) {
     if (!activeCandidate) return;
     onRemoveCandidateJob(activeCandidate.id, jobId);
@@ -1228,13 +1246,17 @@ function WorkflowStudio({ settings, activeCandidate, onWorkflowComplete, onSaveA
     }
   }
 
-  async function run() {
+  async function run({ workflowOverride = null, jobIdOverride = null, inputOverride = null } = {}) {
     runController.current?.abort();
     const controller = new AbortController();
     runController.current = controller;
     const runCandidateId = activeCandidate?.id || '';
-    const runWorkflowId = selected.id;
-    const runJobId = selectedJobId;
+    const runWorkflow = workflowOverride || selected;
+    const runSelectedJobId = jobIdOverride ?? selectedJobId;
+    const runSelectedJob = savedJobs.find((job) => job.id === runSelectedJobId) || null;
+    const runInput = inputOverride ?? input;
+    const runWorkflowId = runWorkflow.id;
+    const runJobId = runSelectedJobId;
     const isCurrentRunContext = (resolvedJobId = runJobId) => activeCandidateIdRef.current === runCandidateId && selectedWorkflowIdRef.current === runWorkflowId && (selectedJobIdRef.current === runJobId || (resolvedJobId && selectedJobIdRef.current === resolvedJobId));
     setLoading(true);
     setError('');
@@ -1242,78 +1264,78 @@ function WorkflowStudio({ settings, activeCandidate, onWorkflowComplete, onSaveA
     setRunMeta(null);
     window.clearTimeout(completionTimer.current);
     setCompletionNotice(null);
-    setRunState({ status: 'running', workflow: selected.title });
-    if (selected.id === 'prepare-cv' && (!activeCandidate || !activeCandidate.resumeText)) {
+    setRunState({ status: 'running', workflow: runWorkflow.title });
+    if (runWorkflow.id === 'prepare-cv' && (!activeCandidate || !activeCandidate.resumeText)) {
       setError('Choose an active profile with an actual saved CV before preparing a tailored CV.');
-      setRunState({ status: 'failed', workflow: selected.title });
+      setRunState({ status: 'failed', workflow: runWorkflow.title });
       setLoading(false);
       return;
     }
-    if (selected.id === 'mark-submitted' || selected.id === 'job-stats') {
+    if (runWorkflow.id === 'mark-submitted' || runWorkflow.id === 'job-stats') {
       const finishedAt = new Date();
-      if (selected.id === 'mark-submitted') {
-        if (!activeCandidate || !selectedJobId) {
+      if (runWorkflow.id === 'mark-submitted') {
+        if (!activeCandidate || !runSelectedJobId) {
           setError('Choose a saved job before tracking its submission.');
-          setRunState({ status: 'failed', workflow: selected.title });
+          setRunState({ status: 'failed', workflow: runWorkflow.title });
           setLoading(false);
           return;
         }
-        onUpdateCandidateJobStage(activeCandidate.id, selectedJobId, submissionStage);
-        const job = (activeCandidate.jobs || []).find((item) => item.id === selectedJobId);
+        onUpdateCandidateJobStage(activeCandidate.id, runSelectedJobId, submissionStage);
+        const job = (activeCandidate.jobs || []).find((item) => item.id === runSelectedJobId);
         const localOutput = `# Application status\n\n**${job?.title || 'Selected role'}** is now **${submissionStage}**.\n\nThis status was saved to the local pipeline at ${finishedAt.toLocaleString()}.`;
         setOutput(localOutput);
         setRunMeta({ model: 'local', tokens: 0 });
-        setRunState({ status: 'complete', workflow: selected.title, finishedAt });
-        onWorkflowComplete(selected.id, localOutput, [], selectedJobId, runCandidateId);
+        setRunState({ status: 'complete', workflow: runWorkflow.title, finishedAt });
+        onWorkflowComplete(runWorkflow.id, localOutput, [], runSelectedJobId, runCandidateId);
       } else {
         const jobs = activeCandidate?.jobs || [];
         const count = (stage) => jobs.filter((job) => (job.stage || 'new') === stage).length;
         const localOutput = `# Pipeline stats\n\n- Total saved roles: ${jobs.length}\n- New: ${count('new')}\n- Submitted: ${count('submitted')}\n- Interviewing: ${count('interviewing')}\n- Offered: ${count('offered')}\n- Rejected: ${count('rejected')}\n- Withdrawn: ${count('withdrawn')}`;
         setOutput(localOutput);
         setRunMeta({ model: 'local', tokens: 0 });
-        setRunState({ status: 'complete', workflow: selected.title, finishedAt });
-        onWorkflowComplete(selected.id, localOutput, [], '', runCandidateId);
+        setRunState({ status: 'complete', workflow: runWorkflow.title, finishedAt });
+        onWorkflowComplete(runWorkflow.id, localOutput, [], '', runCandidateId);
       }
       setLoading(false);
       return;
     }
-    const savedWorkflowContext = selected.id === 'find-me-a-job'
+    const savedWorkflowContext = runWorkflow.id === 'find-me-a-job'
       ? `\n\nSTEP 1 — SAVED PROFILE\n${savedProfileOutput || 'Use the saved CV and profile details above.'}\n\nSTEP 2 — SAVED SEARCH CONFIGURATION\n${savedSearchConfig}`
       : '';
-    const tailoredCvContext = selected.id === 'write-cover-letter' && selectedJob?.tailoredCv?.status === 'approved'
-      ? `\n\nAPPROVED TAILORED CV FOR THIS ROLE\n${selectedJob.tailoredCv.content}`
+    const tailoredCvContext = runWorkflow.id === 'write-cover-letter' && runSelectedJob?.tailoredCv?.status === 'approved'
+      ? `\n\nAPPROVED TAILORED CV FOR THIS ROLE\n${runSelectedJob.tailoredCv.content}`
       : '';
-    const prepareCvContext = selected.id === 'prepare-cv'
-      ? `\n\nVACANCY FOR THIS ROLE\n${input}\n\nSAVED ROLE ANALYSIS\n${selectedJob?.artifacts?.analysis || 'No saved analysis is available; use only the vacancy and original CV.'}`
+    const prepareCvContext = runWorkflow.id === 'prepare-cv'
+      ? `\n\nVACANCY FOR THIS ROLE\n${runInput}\n\nSAVED ROLE ANALYSIS\n${runSelectedJob?.artifacts?.analysis || 'No saved analysis is available; use only the vacancy and original CV.'}`
       : '';
     const candidateContext = activeCandidate
-      ? `ACTIVE PROFILE\nName: ${activeCandidate.name}\nTarget roles: ${activeCandidate.targetRoles.join(', ')}\nSalary expectation: ${activeCandidate.salaryExpectationEur ? `€${Number(activeCandidate.salaryExpectationEur).toLocaleString('en-IE')} gross per year` : 'not specified'}\nCV file: ${activeCandidate.resumeFilename || 'pasted text'}\n\nORIGINAL CV CONTENT\n${activeCandidate.resumeText}${savedWorkflowContext}${tailoredCvContext}${prepareCvContext}\n\nWORKFLOW INPUT\n${input || 'Use the saved workflow information above.'}`
-      : input;
+      ? `ACTIVE PROFILE\nName: ${activeCandidate.name}\nTarget roles: ${activeCandidate.targetRoles.join(', ')}\nSalary expectation: ${activeCandidate.salaryExpectationEur ? `€${Number(activeCandidate.salaryExpectationEur).toLocaleString('en-IE')} gross per year` : 'not specified'}\nCV file: ${activeCandidate.resumeFilename || 'pasted text'}\n\nORIGINAL CV CONTENT\n${activeCandidate.resumeText}${savedWorkflowContext}${tailoredCvContext}${prepareCvContext}\n\nWORKFLOW INPUT\n${runInput || 'Use the saved workflow information above.'}`
+      : runInput;
     try {
       const result = await api('/api/run-command', {
         method: 'POST',
         signal: controller.signal,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          command: selected.id,
+          command: runWorkflow.id,
           input: candidateContext,
-          jobUrl: selectedJob?.url || '',
-          customSearchSites: selected.id === 'find-me-a-job' ? activeCandidate?.customSearchSites || [] : [],
-          salaryExpectationEur: selected.id === 'find-me-a-job' ? activeCandidate?.salaryExpectationEur || null : null,
+          jobUrl: runSelectedJob?.url || '',
+          customSearchSites: runWorkflow.id === 'find-me-a-job' ? activeCandidate?.customSearchSites || [] : [],
+          salaryExpectationEur: runWorkflow.id === 'find-me-a-job' ? activeCandidate?.salaryExpectationEur || null : null,
         }),
       });
       let completedJobId = runJobId;
-      if (selected.id === 'prepare-cv') {
-        const firstLine = String(input || '').split(/\r?\n/).map((line) => line.trim()).find(Boolean) || '';
+      if (runWorkflow.id === 'prepare-cv') {
+        const firstLine = String(runInput || '').split(/\r?\n/).map((line) => line.trim()).find(Boolean) || '';
         completedJobId = await onSaveCandidateCv(runCandidateId, runJobId, result.content, 'draft', {
-          title: selectedJob?.title || firstLine.replace(/^#+\s*/, '').slice(0, 140) || 'Manual role',
-          company: selectedJob?.company || '',
-          url: selectedJob?.url || '',
-          vacancy: result.vacancyText || input,
-          analysis: selectedJob?.artifacts?.analysis || '',
+          title: runSelectedJob?.title || firstLine.replace(/^#+\s*/, '').slice(0, 140) || 'Manual role',
+          company: runSelectedJob?.company || '',
+          url: runSelectedJob?.url || '',
+          vacancy: result.vacancyText || runInput,
+          analysis: runSelectedJob?.artifacts?.analysis || '',
         });
-      } else if (selected.id === 'add-job' && !runJobId) {
-        completedJobId = await onSaveAnalyzedJob(runCandidateId, result.content, input);
+      } else if (runWorkflow.id === 'add-job' && !runJobId) {
+        completedJobId = await onSaveAnalyzedJob(runCandidateId, result.content, runInput);
       }
       if (!isCurrentRunContext(completedJobId)) return;
       setOutput(result.content);
@@ -1323,25 +1345,25 @@ function WorkflowStudio({ settings, activeCandidate, onWorkflowComplete, onSaveA
         selectedJobIdRef.current = completedJobId;
       }
       const finishedAt = new Date();
-      if (selected.id === 'prepare-cv') {
-        setRunState({ status: 'draft', workflow: selected.title, finishedAt });
+      if (runWorkflow.id === 'prepare-cv') {
+        setRunState({ status: 'draft', workflow: runWorkflow.title, finishedAt });
         setCvSaveState('Draft generated. Edit it, save your changes, then approve the CV explicitly.');
         return;
       }
-      const nextWorkflow = nextWorkflowFor(WORKFLOWS, selected.id);
-      setRunState({ status: 'complete', workflow: selected.title, finishedAt });
-      setCompletionNotice({ workflow: selected.title, nextWorkflow, finishedAt });
-      const parsedJobs = selected.id === 'find-me-a-job' ? jobsFromSearchResult(result) : [];
-      onWorkflowComplete(selected.id, result.content, parsedJobs, completedJobId, runCandidateId);
-      if (selected.id === 'mark-submitted' && selectedJobId && runCandidateId) onUpdateCandidateJobStage(runCandidateId, selectedJobId, submissionStage);
+      const nextWorkflow = nextWorkflowFor(WORKFLOWS, runWorkflow.id);
+      setRunState({ status: 'complete', workflow: runWorkflow.title, finishedAt });
+      setCompletionNotice({ workflow: runWorkflow.title, nextWorkflow, finishedAt });
+      const parsedJobs = runWorkflow.id === 'find-me-a-job' ? jobsFromSearchResult(result) : [];
+      onWorkflowComplete(runWorkflow.id, result.content, parsedJobs, completedJobId, runCandidateId);
+      if (runWorkflow.id === 'mark-submitted' && runSelectedJobId && runCandidateId) onUpdateCandidateJobStage(runCandidateId, runSelectedJobId, submissionStage);
       completionTimer.current = window.setTimeout(() => setCompletionNotice(null), 12000);
     } catch (err) {
       if (err.name === 'AbortError') {
         setError('The run was cancelled.');
-        setRunState({ status: 'failed', workflow: selected.title });
+        setRunState({ status: 'failed', workflow: runWorkflow.title });
       } else {
         setError(err.message);
-        setRunState({ status: 'failed', workflow: selected.title });
+        setRunState({ status: 'failed', workflow: runWorkflow.title });
       }
     } finally {
       if (runController.current === controller) runController.current = null;
@@ -1469,20 +1491,20 @@ function WorkflowStudio({ settings, activeCandidate, onWorkflowComplete, onSaveA
               </div>
             </>
           )}
-          {['add-job', 'prepare-cv', 'write-cover-letter', 'mark-submitted'].includes(selected.id) && (
+          {['add-job', 'write-cover-letter', 'mark-submitted'].includes(selected.id) && (
             <div className={`job-picker ${selected.id === 'add-job' ? 'analyze-job-picker' : ''}`}>
               <label className="field-label" htmlFor="saved-job-select"><span>JOBS FOUND IN STEP 3</span><strong>{savedJobs.length} SAVED</strong></label>
               <select id="saved-job-select" value={selectedJobId} onChange={(event) => chooseJob(event.target.value)} disabled={!savedJobs.length}>
                 <option value="">{savedJobs.length ? 'Select a job to process…' : 'No saved jobs — run Step 3 first'}</option>
                 {savedJobs.map((job) => <option key={job.id} value={job.id}>{job.title}{job.company ? ` — ${job.company}` : ''}</option>)}
               </select>
-              {savedJobs.length > 0 && <div className="job-option-list">{savedJobs.map((job) => <div key={job.id} className={`job-option-row ${selectedJobId === job.id ? 'selected' : ''}`} onClick={() => chooseJob(job.id)} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') chooseJob(job.id); }} role="button" tabIndex={0}><span><strong>{job.title}</strong><small>{job.company || job.url}</small></span><button type="button" onClick={(event) => { event.stopPropagation(); markJobNotInterested(job.id); }} aria-label={`Not interested in ${job.title}`}>Not interested <X size={13} /></button></div>)}</div>}
+              {savedJobs.length > 0 && <div className="job-option-list">{savedJobs.map((job) => <div key={job.id} className={`job-option-row ${selectedJobId === job.id ? 'selected' : ''}`} onClick={(event) => { if (event.target !== event.currentTarget && event.target.closest('button')) return; chooseJob(job.id); }} onKeyDown={(event) => { if (event.target !== event.currentTarget) return; if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); chooseJob(job.id); } }} role="button" tabIndex={0}><span><strong>{job.title}</strong><small>{job.company || job.url || 'Manual role'}</small></span><div className="job-option-actions"><button type="button" className="job-analyze-button" onClick={(event) => { event.stopPropagation(); analyzeSavedJob(job); }} disabled={loading} aria-label={`Analyze ${job.title}`}><Play size={12} fill="currentColor" /> Analyze</button><button type="button" className="job-not-interested-button" onClick={(event) => { event.stopPropagation(); markJobNotInterested(job.id); }} disabled={loading} aria-label={`Not interested in ${job.title}`}>Not interested <X size={13} /></button></div></div>)}</div>}
               <small>{savedJobs.length ? 'Select a posting to load its details below.' : 'Start the Step 3 job search to populate this list for the active profile.'}</small>
               {selected.id === 'mark-submitted' && selectedJob && <div className="selected-job-details"><div className="selected-job-details-heading"><span className="eyebrow">APPLICATION STATUS</span></div><h3>{selectedJob.title}</h3><label className="field-label" htmlFor="submission-stage">SET STAGE</label><select id="submission-stage" value={submissionStage} onChange={(event) => setSubmissionStage(event.target.value)}><option value="submitted">Submitted</option><option value="interviewing">Interviewing</option><option value="offered">Offered</option><option value="rejected">Rejected</option><option value="withdrawn">Withdrawn</option></select><small>Running this step saves the selected stage to the local application pipeline.</small></div>}
               {selected.id === 'add-job' && <div className="selected-job-details"><div className="selected-job-details-heading"><span className="eyebrow">SELECTED JOB</span>{selectedJob && <span className="selected-job-state">{summaryLoading ? 'SUMMARIZING…' : 'READY TO ANALYZE'}</span>}</div>{selectedJob ? <><h3>{selectedJob.title}</h3>{selectedJob.company && <p className="selected-job-company">{selectedJob.company}</p>}<a href={selectedJob.url} target="_blank" rel="noreferrer">{selectedJob.url} <ArrowRight size={13} /></a><div className="selected-job-summary">{summaryLoading ? 'Reading the posting and preparing a summary…' : (selectedJob.summary || 'No summary was returned. Open the posting link to review the full role description.')}</div></> : <div className="selected-job-empty">Choose a job above to view its role details and prepare it for analysis.</div>}</div>}
-              {selected.id === 'prepare-cv' && <div className="selected-job-details"><div className="selected-job-details-heading"><span className="eyebrow">ROLE FOR TAILORING</span><span className="selected-job-state">{selectedCv?.status === 'approved' ? 'APPROVED CV SAVED' : selectedCv ? 'DRAFT CV SAVED' : 'READY TO PREPARE'}</span></div>{selectedJob ? <><h3>{selectedJob.title}</h3>{selectedJob.company && <p className="selected-job-company">{selectedJob.company}</p>}{selectedJob.url && <a href={selectedJob.url} target="_blank" rel="noreferrer">{selectedJob.url} <ArrowRight size={13} /></a>}<div className="selected-job-summary">The original CV remains unchanged. Edit the tailored draft below, then explicitly approve it when it is ready.</div></> : <div className="selected-job-empty">Select a saved role, or paste a vacancy above to create a role record when the CV draft is generated.</div>}</div>}
             </div>
           )}
+          {selected.id === 'prepare-cv' && <div className="selected-job-details prepare-role-details"><div className="selected-job-details-heading"><span className="eyebrow">ROLE FOR TAILORING</span><span className="selected-job-state">{selectedCv?.status === 'approved' ? 'APPROVED CV SAVED' : selectedCv ? 'DRAFT CV SAVED' : 'READY TO PREPARE'}</span></div>{selectedJob ? <><h3>{selectedJob.title}</h3>{selectedJob.company && <p className="selected-job-company">{selectedJob.company}</p>}{selectedJob.url && <a href={selectedJob.url} target="_blank" rel="noreferrer">{selectedJob.url} <ArrowRight size={13} /></a>}<div className="selected-job-summary">The original CV remains unchanged. Edit the tailored draft below, then explicitly approve it when it is ready.</div></> : <><div className="selected-job-empty">Choose a role in Analyze a job, or paste a vacancy above to prepare a CV manually.</div><button type="button" className="button secondary compact prepare-choose-job" onClick={() => chooseWorkflow(WORKFLOWS.find((workflow) => workflow.id === 'add-job'))}><ArrowRight size={14} /> Choose a job in Analyze a job</button></>}</div>}
           {error && <div className="error-banner"><span>{error}</span>{!settings.apiKeyConfigured && <button onClick={onOpenSettings}>Open settings</button>}</div>}
           <div className="runner-actions">
             <div className="runner-model"><span className="model-pulse" /><span>RUNNING ON</span><strong>{settings.model}</strong></div>

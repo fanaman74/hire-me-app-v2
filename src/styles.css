@@ -216,8 +216,13 @@ textarea::placeholder, input::placeholder { color: #5e6358; }
 .job-option-row strong, .job-option-row small { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .job-option-row strong { color: var(--soft); font-size: 8px; font-weight: 500; }
 .job-option-row small { margin-top: 4px; color: var(--muted); font-size: 7px; }
-.job-option-row button { min-height: 28px; display: inline-flex; align-items: center; gap: 5px; padding: 0 8px; color: #ff8a83; background: transparent; border: 1px solid #63201b; font: inherit; font-size: 7px; cursor: pointer; white-space: nowrap; }
-.job-option-row button:hover { color: var(--bg); background: #ff8a83; border-color: #ff8a83; }
+.job-option-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 6px; }
+.job-option-row button { min-height: 28px; display: inline-flex; align-items: center; gap: 5px; padding: 0 8px; background: transparent; border: 1px solid; font: inherit; font-size: 7px; cursor: pointer; white-space: nowrap; }
+.job-option-row button:disabled { opacity: .45; cursor: not-allowed; }
+.job-option-row .job-analyze-button { color: var(--signal); border-color: #40571b; }
+.job-option-row .job-analyze-button:hover:not(:disabled) { color: var(--bg); background: var(--signal); border-color: var(--signal); }
+.job-option-row .job-not-interested-button { color: #ff8a83; border-color: #63201b; }
+.job-option-row .job-not-interested-button:hover:not(:disabled) { color: var(--bg); background: #ff8a83; border-color: #ff8a83; }
 .job-option-row { cursor: pointer; transition: background .18s ease, border-color .18s ease; }
 .job-option-row:hover, .job-option-row.selected { background: #11170a; border-left: 2px solid var(--signal); padding-left: 9px; }
 .job-option-row:focus-visible { outline: 2px solid var(--signal); outline-offset: -2px; }
@@ -229,6 +234,7 @@ textarea::placeholder, input::placeholder { color: #5e6358; }
 .selected-job-details a { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; margin-top: 13px; overflow: hidden; color: var(--signal); font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
 .selected-job-summary { margin-top: 16px; padding-top: 14px; color: var(--muted); border-top: 1px solid var(--line); font-size: 9px; line-height: 1.7; white-space: pre-wrap; }
 .selected-job-empty { margin-top: 14px; color: var(--muted); font-size: 9px; line-height: 1.6; }
+.prepare-choose-job { margin-top: 14px; }
 .job-picker small { display: block; margin-top: 9px; color: var(--muted); font-size: 8px; line-height: 1.5; }
 .runner-actions { min-height: 67px; margin-top: 21px; display: flex; align-items: center; justify-content: space-between; gap: 15px; padding: 0 23px; border-top: 1px solid var(--line); }
 .runner-model { min-width: 0; display: flex; align-items: center; gap: 8px; }
@@ -502,6 +508,9 @@ input[type='range']::-webkit-slider-thumb { appearance: none; width: 13px; heigh
   .custom-source-form { grid-template-columns: 1fr; }
   .custom-source-form .button { width: 100%; }
   .found-role-facts { grid-template-columns: 1fr 1fr; }
+  .job-option-row { grid-template-columns: 1fr; align-items: stretch; }
+  .job-option-actions { justify-content: stretch; }
+  .job-option-actions button { flex: 1 1 0; }
 }
 
 @media (max-width: 460px) {
