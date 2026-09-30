@@ -254,6 +254,27 @@ textarea::placeholder, input::placeholder { color: #5e6358; }
 .complete-badge { height: 34px; display: inline-flex; align-items: center; gap: 7px; padding: 0 10px; color: var(--signal); background: #10170b; border: 1px solid #40571b; text-transform: uppercase; font-size: 8px; letter-spacing: .08em; }
 .output-panel pre { margin: 0; padding: 25px; color: #d9dbd4; white-space: pre-wrap; word-break: break-word; font: 400 11px/1.75 'IBM Plex Mono', monospace; }
 .output-add-job pre { font-size: 14px; line-height: 1.8; }
+.markdown-output { max-width: 78ch; padding: 26px 25px 30px; color: #d9dbd4; overflow-wrap: anywhere; font-size: 11px; line-height: 1.78; }
+.markdown-output > :first-child { margin-top: 0; }
+.markdown-output > :last-child { margin-bottom: 0; }
+.markdown-output h1, .markdown-output h2, .markdown-output h3, .markdown-output h4 { margin: 30px 0 10px; color: var(--signal); line-height: 1.35; letter-spacing: -.015em; }
+.markdown-output h1 { font-size: 19px; font-weight: 600; }
+.markdown-output h2 { padding-bottom: 8px; border-bottom: 1px solid #40571b; font-size: 16px; font-weight: 600; }
+.markdown-output h3 { color: #e1ffa0; font-size: 13px; font-weight: 600; }
+.markdown-output h4 { color: var(--soft); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .08em; }
+.markdown-output p { margin: 0 0 15px; }
+.markdown-output strong { color: #f4f5f1; font-weight: 600; }
+.markdown-output em { color: var(--soft); }
+.markdown-output ul, .markdown-output ol { margin: 0 0 18px; padding-left: 24px; }
+.markdown-output li { margin: 6px 0; padding-left: 3px; }
+.markdown-output li::marker { color: var(--signal); font-weight: 600; }
+.markdown-output a { color: var(--signal); text-decoration-thickness: 1px; text-underline-offset: 3px; }
+.markdown-output a:hover { color: #e1ffa0; }
+.markdown-output code { padding: 2px 5px; color: #e1ffa0; background: #14180f; border: 1px solid #35431d; font: inherit; }
+.markdown-output .markdown-code { margin: 0 0 18px; padding: 14px 16px; overflow-x: auto; color: #d9dbd4; background: #080907; border: 1px solid var(--line); font-size: 10px; line-height: 1.65; }
+.markdown-output .markdown-code code { padding: 0; color: inherit; background: transparent; border: 0; }
+.markdown-output blockquote { margin: 0 0 18px; padding: 11px 14px; color: var(--soft); background: #10130d; border-left: 1px solid var(--signal); }
+.markdown-output hr { margin: 25px 0; border: 0; border-top: 1px solid var(--line-bright); }
 .found-role-links { padding: 20px 24px 24px; border-top: 1px solid var(--line); }
 .found-role-links-heading { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-bottom: 10px; }
 .found-role-links-heading strong { color: var(--muted); font-size: 8px; letter-spacing: .1em; }

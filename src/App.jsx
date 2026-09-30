@@ -770,6 +770,105 @@ function ReadinessItem({ complete, number, title, copy, action }) {
   );
 }
 
+function renderMarkdownInline(value, keyPrefix) {
+  const source = String(value || '');
+  const tokens = [];
+  const pattern = /(\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)|\*\*([^*]+)\*\*|__([^_]+)__|`([^`]+)`|\*([^*\n]+)\*|_([^_\n]+)_)/gi;
+  let cursor = 0;
+  let match;
+
+  while ((match = pattern.exec(source))) {
+    if (match.index > cursor) tokens.push(source.slice(cursor, match.index));
+    const key = `${keyPrefix}-${match.index}`;
+    if (match[2] && match[3]) {
+      tokens.push(<a key={key} href={match[3]} target="_blank" rel="noreferrer">{match[2]}</a>);
+    } else if (match[4] || match[5]) {
+      tokens.push(<strong key={key}>{match[4] || match[5]}</strong>);
+    } else if (match[6]) {
+      tokens.push(<code key={key}>{match[6]}</code>);
+    } else {
+      tokens.push(<em key={key}>{match[7] || match[8]}</em>);
+    }
+    cursor = pattern.lastIndex;
+  }
+  if (cursor < source.length) tokens.push(source.slice(cursor));
+  return tokens;
+}
+
+function MarkdownOutput({ content }) {
+  const lines = String(content || '').replace(/\r\n?/g, '\n').split('\n');
+  const blocks = [];
+  let index = 0;
+
+  while (index < lines.length) {
+    const line = lines[index];
+    if (!line.trim()) { index += 1; continue; }
+
+    if (/^\s*```/.test(line)) {
+      const codeLines = [];
+      index += 1;
+      while (index < lines.length && !/^\s*```/.test(lines[index])) {
+        codeLines.push(lines[index]);
+        index += 1;
+      }
+      if (index < lines.length) index += 1;
+      blocks.push(<pre className="markdown-code" key={`code-${index}`}><code>{codeLines.join('\n')}</code></pre>);
+      continue;
+    }
+
+    const heading = line.match(/^\s*(#{1,6})\s+(.+?)\s*#*\s*$/);
+    if (heading) {
+      const Heading = `h${Math.min(heading[1].length, 4)}`;
+      blocks.push(<Heading key={`heading-${index}`}>{renderMarkdownInline(heading[2], `heading-${index}`)}</Heading>);
+      index += 1;
+      continue;
+    }
+
+    if (/^\s{0,3}([-*_])(?:\s*\1){2,}\s*$/.test(line)) {
+      blocks.push(<hr key={`rule-${index}`} />);
+      index += 1;
+      continue;
+    }
+
+    const listItem = line.match(/^\s*([-+*]|\d+[.)])\s+(.+)$/);
+    if (listItem) {
+      const ordered = /^\d/.test(listItem[1]);
+      const items = [];
+      while (index < lines.length) {
+        const item = lines[index].match(/^\s*([-+*]|\d+[.)])\s+(.+)$/);
+        if (!item || /^\d/.test(item[1]) !== ordered) break;
+        items.push(<li key={`item-${index}`}>{renderMarkdownInline(item[2], `item-${index}`)}</li>);
+        index += 1;
+      }
+      const List = ordered ? 'ol' : 'ul';
+      blocks.push(<List key={`list-${index}`}>{items}</List>);
+      continue;
+    }
+
+    const quote = line.match(/^\s*>\s?(.*)$/);
+    if (quote) {
+      const quoteLines = [];
+      while (index < lines.length) {
+        const quoted = lines[index].match(/^\s*>\s?(.*)$/);
+        if (!quoted) break;
+        quoteLines.push(quoted[1]);
+        index += 1;
+      }
+      blocks.push(<blockquote key={`quote-${index}`}>{quoteLines.map((quoted, quoteIndex) => <span key={`quote-line-${quoteIndex}`}>{renderMarkdownInline(quoted, `quote-${index}-${quoteIndex}`)}{quoteIndex < quoteLines.length - 1 && <br />}</span>)}</blockquote>);
+      continue;
+    }
+
+    const paragraphLines = [];
+    while (index < lines.length && lines[index].trim() && !/^\s*(#{1,6})\s+/.test(lines[index]) && !/^\s*([-+*]|\d+[.)])\s+/.test(lines[index]) && !/^\s*>/.test(lines[index]) && !/^\s*```/.test(lines[index]) && !/^\s{0,3}([-*_])(?:\s*\1){2,}\s*$/.test(lines[index])) {
+      paragraphLines.push(lines[index]);
+      index += 1;
+    }
+    blocks.push(<p key={`paragraph-${index}`}>{paragraphLines.map((paragraphLine, paragraphIndex) => <span key={`paragraph-line-${paragraphIndex}`}>{renderMarkdownInline(paragraphLine, `paragraph-${index}-${paragraphIndex}`)}{paragraphIndex < paragraphLines.length - 1 && <br />}</span>)}</p>);
+  }
+
+  return <div className="markdown-output">{blocks}</div>;
+}
+
 function WorkflowStudio({ settings, activeCandidate, onWorkflowComplete, onUpdateCandidateSites, onUpdateCandidateSalary, onRemoveCandidateJob, onSelectCandidateJob, onUpdateCandidateJob, onUpdateCandidateJobStage, onOpenSettings, onOpenCandidates }) {
   const [selected, setSelected] = useState(() => lastWorkflowFor(activeCandidate));
   const [input, setInput] = useState('');
@@ -1153,7 +1252,7 @@ function WorkflowStudio({ settings, activeCandidate, onWorkflowComplete, onUpdat
             <div><span className="eyebrow">AGENT OUTPUT</span><h2>{selected.title}</h2></div>
             {output && <div className="output-heading-actions"><span className="complete-badge"><CircleCheckBig size={15} /> Completed</span><button className="button secondary compact" onClick={copyOutput}>{copied ? <Check size={15} /> : <Copy size={15} />}{copied ? 'Copied' : 'Copy'}</button></div>}
           </div>
-          {loading ? <div className="output-loading"><span /><span /><span /></div> : selected.id !== 'find-me-a-job' && <pre>{output}</pre>}
+          {loading ? <div className="output-loading"><span /><span /><span /></div> : selected.id !== 'find-me-a-job' && <MarkdownOutput content={output} />}
           {!loading && selected.id === 'find-me-a-job' && savedJobs.length > 0 && (
             <div className="found-role-links">
               <div className="found-role-links-heading"><span className="eyebrow">ROLES FOUND</span><strong>{savedJobs.length} SAVED · {savedJobs.filter((job) => (job.verification?.status || job.verificationStatus) === 'page-fetched').length} PAGES FETCHED</strong></div>
