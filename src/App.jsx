@@ -333,6 +333,8 @@ function workflowOutputText(value) {
 
 function WorkspaceApp({ user, onLogout, notice = '' }) {
   const [page, setPage] = useState('overview');
+  const [workflowNavRequest, setWorkflowNavRequest] = useState(null);
+  const [workflowNavSelection, setWorkflowNavSelection] = useState('');
   const [mobileNav, setMobileNav] = useState(false);
   const [settings, setSettings] = useState({ provider: 'openrouter', model: DEFAULT_MODEL, temperature: 0.3, maxTokens: 4096, searchSources: DEFAULT_SEARCH_SOURCES, searchCountry: '', customSearchSources: [], customProvider: null, providerKeys: {}, apiKeyConfigured: false });
   const [settingsLoading, setSettingsLoading] = useState(true);
@@ -605,6 +607,16 @@ function WorkspaceApp({ user, onLogout, notice = '' }) {
   function navigate(next) {
     setPage(next);
     setMobileNav(false);
+    if (next !== 'workflows') {
+      setWorkflowNavRequest(null);
+      setWorkflowNavSelection('');
+    }
+  }
+
+  function navigateWorkflow(workflowId) {
+    setPage('workflows');
+    setMobileNav(false);
+    setWorkflowNavRequest({ id: workflowId, nonce: `${Date.now()}-${Math.random()}` });
   }
 
   const activeLabel = NAV.find((item) => item.id === page)?.label || 'Overview';
@@ -623,7 +635,39 @@ function WorkspaceApp({ user, onLogout, notice = '' }) {
 
         <nav className="main-nav" aria-label="Main navigation">
           <span className="nav-caption">WORKSPACE</span>
-          {NAV.map(({ id, label, icon: Icon }) => (
+          {NAV.map(({ id, label, icon: Icon }) => id === 'workflows' ? (
+            <div className="workflow-nav-group" key={id}>
+              <button
+                className={`nav-item ${page === id ? 'active' : ''}`}
+                onClick={() => navigate(id)}
+                aria-expanded={page === id}
+                aria-controls="workflow-submenu"
+              >
+                <Icon size={17} strokeWidth={1.7} />
+                <span>{label}</span>
+                <ChevronDown className="workflow-nav-caret" size={14} aria-hidden="true" />
+              </button>
+              {page === 'workflows' && (
+                <div id="workflow-submenu" className="workflow-submenu" aria-label="Agent workflow steps">
+                  {WORKFLOWS.map((workflow) => {
+                    const completed = (activeCandidate?.completedSteps || []).includes(workflow.id);
+                    return (
+                      <button
+                        key={workflow.id}
+                        type="button"
+                        className={`workflow-submenu-item ${workflowNavSelection === workflow.id ? 'selected' : ''} ${completed ? 'completed' : ''}`}
+                        onClick={() => navigateWorkflow(workflow.id)}
+                        aria-current={workflowNavSelection === workflow.id ? 'step' : undefined}
+                      >
+                        <span>{completed ? <CircleCheckBig size={12} /> : workflow.number}</span>
+                        <span>{workflow.title}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          ) : (
             <button key={id} className={`nav-item ${page === id ? 'active' : ''}`} onClick={() => navigate(id)}>
               <Icon size={17} strokeWidth={1.7} />
               <span>{label}</span>
@@ -670,7 +714,7 @@ function WorkspaceApp({ user, onLogout, notice = '' }) {
           {notice && <div className="auth-notice workspace-auth-notice">{notice}</div>}
           {profileStorageError && <div className="error-banner"><span>{profileStorageError}</span></div>}
           {page === 'overview' && <Overview onNavigate={navigate} settings={settings} candidates={candidates} activeCandidate={activeCandidate} onSelectCandidate={selectCandidate} />}
-          {page === 'workflows' && <WorkflowStudio settings={settings} activeCandidate={activeCandidate} onWorkflowComplete={completeWorkflow} onSaveAnalyzedJob={saveAnalyzedJob} onSaveCandidateCv={saveCandidateCv} onUpdateCandidateSites={updateCandidateSites} onUpdateCandidateSalary={updateCandidateSalary} onRemoveCandidateJob={removeCandidateJob} onSelectCandidateJob={selectCandidateJob} onUpdateCandidateJob={updateCandidateJob} onUpdateCandidateJobStage={updateCandidateJobStage} onOpenSettings={() => navigate('settings')} onOpenCandidates={() => navigate('candidates')} />}
+          {page === 'workflows' && <WorkflowStudio settings={settings} activeCandidate={activeCandidate} workflowNavRequest={workflowNavRequest} onSelectedWorkflowChange={setWorkflowNavSelection} onWorkflowComplete={completeWorkflow} onSaveAnalyzedJob={saveAnalyzedJob} onSaveCandidateCv={saveCandidateCv} onUpdateCandidateSites={updateCandidateSites} onUpdateCandidateSalary={updateCandidateSalary} onRemoveCandidateJob={removeCandidateJob} onSelectCandidateJob={selectCandidateJob} onUpdateCandidateJob={updateCandidateJob} onUpdateCandidateJobStage={updateCandidateJobStage} onOpenSettings={() => navigate('settings')} onOpenCandidates={() => navigate('candidates')} />}
           {page === 'candidates' && <Candidates candidates={candidates} activeCandidate={activeCandidate} onAddCandidate={addCandidate} onUpdateCandidate={updateCandidate} onSelectCandidate={selectCandidate} onRestoreBackup={restoreBackup} onStart={() => navigate('workflows')} />}
           {page === 'pipeline' && <Pipeline candidates={candidates} onUpdateStage={updateCandidateJobStage} onStart={() => navigate('workflows')} />}
           {page === 'settings' && <SettingsPage settings={settings} setSettings={setSettings} />}
@@ -967,7 +1011,7 @@ function MarkdownOutput({ content, fontSize }) {
   return <div className="markdown-output" style={fontSize ? { '--markdown-size': `${fontSize}px` } : undefined}>{blocks}</div>;
 }
 
-function WorkflowStudio({ settings, activeCandidate, onWorkflowComplete, onSaveAnalyzedJob, onSaveCandidateCv, onUpdateCandidateSites, onUpdateCandidateSalary, onRemoveCandidateJob, onSelectCandidateJob, onUpdateCandidateJob, onUpdateCandidateJobStage, onOpenSettings, onOpenCandidates }) {
+function WorkflowStudio({ settings, activeCandidate, workflowNavRequest, onSelectedWorkflowChange, onWorkflowComplete, onSaveAnalyzedJob, onSaveCandidateCv, onUpdateCandidateSites, onUpdateCandidateSalary, onRemoveCandidateJob, onSelectCandidateJob, onUpdateCandidateJob, onUpdateCandidateJobStage, onOpenSettings, onOpenCandidates }) {
   const [selected, setSelected] = useState(() => lastWorkflowFor(activeCandidate));
   const [input, setInput] = useState('');
   const [output, setOutput] = useState('');
@@ -1018,6 +1062,7 @@ function WorkflowStudio({ settings, activeCandidate, onWorkflowComplete, onSaveA
   useEffect(() => { activeCandidateIdRef.current = activeCandidate?.id || ''; }, [activeCandidate?.id]);
   useEffect(() => { selectedWorkflowIdRef.current = selected.id; }, [selected.id]);
   useEffect(() => { selectedJobIdRef.current = selectedJobId; }, [selectedJobId]);
+  useEffect(() => { onSelectedWorkflowChange?.(selected.id); }, [onSelectedWorkflowChange, selected.id]);
   useEffect(() => {
     if (!analysisFocus || selected.id !== 'add-job' || (!loading && !output)) return undefined;
     const frame = window.requestAnimationFrame(() => {
@@ -1137,6 +1182,12 @@ function WorkflowStudio({ settings, activeCandidate, onWorkflowComplete, onSaveA
       : [`${persistedJob.title}${persistedJob.company ? ` — ${persistedJob.company}` : ''}`, persistedJob.url, persistedJob.summary].filter(Boolean).join('\n\n')) : candidateSourceFor(persistedWorkflow.id));
     setCvSaveState('');
   }, [activeCandidate?.id, activeCandidate?.lastWorkflowId]);
+
+  useEffect(() => {
+    if (!workflowNavRequest?.id) return;
+    const requestedWorkflow = WORKFLOWS.find((workflow) => workflow.id === workflowNavRequest.id);
+    if (requestedWorkflow) chooseWorkflow(requestedWorkflow);
+  }, [workflowNavRequest?.nonce]);
 
   useEffect(() => {
     if (selected.id !== 'find-me-a-job' || !activeCandidate || !savedSearchConfig) return;
@@ -1470,17 +1521,6 @@ function WorkflowStudio({ settings, activeCandidate, onWorkflowComplete, onSaveA
         <button type="button" onClick={onOpenCandidates}>{activeCandidate ? 'Switch profile' : 'Choose profile'} <ArrowRight size={14} /></button>
       </section>
       <div className="studio-grid">
-        <aside className="workflow-selector panel">
-          {WORKFLOWS.map((workflow) => {
-            const Icon = workflow.icon;
-            const completed = (activeCandidate?.completedSteps || []).includes(workflow.id);
-            return (
-              <button key={workflow.id} className={`${selected.id === workflow.id ? 'selected' : ''} ${completed ? 'completed' : ''}`} onClick={() => chooseWorkflow(workflow)}>
-                <span>{completed ? <CircleCheckBig size={14} /> : workflow.number}</span><Icon size={16} /><strong>{workflow.title}</strong>
-              </button>
-            );
-          })}
-        </aside>
         <section className="runner panel">
           <div className="runner-heading">
             <div className="runner-icon"><selected.icon size={22} /></div>
