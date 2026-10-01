@@ -1,0 +1,16 @@
+Ubuntu Font Licence v1.0
+
+This Font Software is licensed under the Ubuntu Font Licence Version 1.0.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of the Font Software, to use, study, copy, merge, embed, modify, redistribute,
+and sell modified and unmodified copies of the Font Software, subject to the
+conditions that the copyright and licence notices are retained and that the
+Font Software is not sold by itself.
+
+THE FONT SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS
+OR IMPLIED, INCLUDING BUT NOT LIMITED TO ANY WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
+
+The complete licence text is available at:
+https://ubuntu.com/legal/font-licence

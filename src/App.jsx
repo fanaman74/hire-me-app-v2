@@ -1041,6 +1041,8 @@ function WorkflowStudio({ settings, activeCandidate, workflowNavRequest, onSelec
   const [cvFormat, setCvFormat] = useState(DEFAULT_CV_FORMAT);
   const [cvSaveState, setCvSaveState] = useState('');
   const [cvActionLoading, setCvActionLoading] = useState(false);
+  const [cvExportFormat, setCvExportFormat] = useState('');
+  const [cvExportError, setCvExportError] = useState('');
   const [analysisFocus, setAnalysisFocus] = useState(false);
   const activeCandidateIdRef = useRef(activeCandidate?.id || '');
   const selectedWorkflowIdRef = useRef(selected.id);
@@ -1536,6 +1538,50 @@ function WorkflowStudio({ settings, activeCandidate, workflowNavRequest, onSelec
     }
   }
 
+  async function exportCv(format) {
+    if (loading || cvActionLoading || cvExportFormat || !output.trim()) return;
+    const exportCandidateId = activeCandidate?.id || '';
+    const exportJobId = selectedJobId;
+    const exportContent = output;
+    setCvExportFormat(format);
+    setCvExportError('');
+    try {
+      const response = await fetch('/api/cv-export', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          content: exportContent,
+          format,
+          cvFormat: normalizeCvFormat(selectedCv?.format || cvFormat),
+          profileName: activeCandidate?.name || '',
+          roleTitle: selectedJob?.title || '',
+        }),
+      });
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data?.error?.message || `Export failed (${response.status})`);
+      }
+      const blob = await response.blob();
+      if (activeCandidateIdRef.current !== exportCandidateId || selectedWorkflowIdRef.current !== 'prepare-cv' || selectedJobIdRef.current !== exportJobId) return;
+      const disposition = response.headers.get('content-disposition') || '';
+      const filename = disposition.match(/filename\*?=(?:UTF-8''|"?)([^";]+)/i)?.[1] || `tailored-cv.${format}`;
+      const link = document.createElement('a');
+      const objectUrl = URL.createObjectURL(blob);
+      link.href = objectUrl;
+      link.download = decodeURIComponent(filename.replace(/"/g, ''));
+      link.style.display = 'none';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 30000);
+    } catch (exportError) {
+      if (activeCandidateIdRef.current === exportCandidateId && selectedWorkflowIdRef.current === 'prepare-cv' && selectedJobIdRef.current === exportJobId) setCvExportError(exportError.message);
+    } finally {
+      setCvExportFormat('');
+    }
+  }
+
   return (
     <>
       <PageIntro eyebrow="AGENT WORKFLOWS" title={<>One job.<br /><span>One focused agent.</span></>} copy="Choose a workflow, provide the source material, and run it with your selected provider and model." />
@@ -1665,7 +1711,8 @@ function WorkflowStudio({ settings, activeCandidate, workflowNavRequest, onSelec
             {selected.id === 'prepare-cv' && output && <div className="cv-editor-panel">
               <div className="cv-editor-heading"><span className="eyebrow">EDITABLE TAILORED CV</span><div className="cv-font-controls" aria-label="CV font size"><button type="button" onClick={() => setCvFontSize((size) => Math.max(14, size - 1))} disabled={cvFontSize <= 14} aria-label="Decrease CV font size">A−</button><span>{cvFontSize}px</span><button type="button" onClick={() => setCvFontSize((size) => Math.min(20, size + 1))} disabled={cvFontSize >= 20} aria-label="Increase CV font size">A+</button></div></div>
               <textarea className="cv-editor" style={{ fontSize: `${cvFontSize}px` }} value={output} disabled={cvActionLoading} onChange={(event) => { setOutput(event.target.value); setCvSaveState('Unsaved edits'); setRunState({ status: 'draft', workflow: selected.title }); setCompletionNotice(null); }} aria-label="Editable tailored CV" />
-              <div className="cv-actions"><button type="button" className="button secondary compact" onClick={() => saveCv('draft')} disabled={cvActionLoading || !output.trim()}>{cvActionLoading ? <RefreshCw className="spin" size={14} /> : <FileText size={14} />} Save draft</button><button type="button" className="button primary compact" onClick={() => saveCv('approved')} disabled={cvActionLoading || !output.trim()}>{cvActionLoading ? <RefreshCw className="spin" size={14} /> : <Check size={14} />} Approve CV</button>{cvSaveState && <small role="status">{cvSaveState}</small>}</div>
+              <div className="cv-actions"><button type="button" className="button secondary compact" onClick={() => saveCv('draft')} disabled={cvActionLoading || cvExportFormat || !output.trim()}>{cvActionLoading ? <RefreshCw className="spin" size={14} /> : <FileText size={14} />} Save draft</button><button type="button" className="button primary compact" onClick={() => saveCv('approved')} disabled={cvActionLoading || cvExportFormat || !output.trim()}>{cvActionLoading ? <RefreshCw className="spin" size={14} /> : <Check size={14} />} Approve CV</button>{cvSaveState && <small role="status">{cvSaveState}</small>}</div>
+              <div className="cv-export-actions"><span className="eyebrow">DOWNLOAD CURRENT EDITED CV</span><div><button type="button" className="button secondary compact" onClick={() => exportCv('pdf')} disabled={loading || cvActionLoading || Boolean(cvExportFormat) || !output.trim()}>{cvExportFormat === 'pdf' ? <RefreshCw className="spin" size={14} /> : null} PDF</button><button type="button" className="button secondary compact" onClick={() => exportCv('docx')} disabled={loading || cvActionLoading || Boolean(cvExportFormat) || !output.trim()}>{cvExportFormat === 'docx' ? <RefreshCw className="spin" size={14} /> : null} DOCX</button></div>{cvExportError && <small className="cv-export-error" role="alert">{cvExportError}</small>}</div>
               <div className="cv-preview-label"><span className="eyebrow">PREVIEW</span><small>Review the rendered CV before saving or approving.</small></div>
               <MarkdownOutput content={output} fontSize={cvFontSize} />
             </div>}

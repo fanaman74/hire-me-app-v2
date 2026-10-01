@@ -16,6 +16,7 @@ import { createAuthStore } from './auth.js';
 import { SEARCH_SOURCES, SEARCH_SOURCE_IDS } from '../shared/search-sources.js';
 import { canonicalJobUrl, extractJobLeads } from '../shared/jobs.js';
 import { cvFormatDetails, isCvFormat, normalizeCvFormat } from '../shared/cv-format.js';
+import { MAX_CV_EXPORT_CHARS, createCvExport } from './cv-export.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, '..');
@@ -478,6 +479,31 @@ app.put('/api/profiles', async (req, res) => {
   } catch (error) {
     const result = apiError(error, 'Could not save profiles');
     res.status(result.status).json(result.body);
+  }
+});
+
+app.post('/api/cv-export', async (req, res) => {
+  const content = typeof req.body?.content === 'string' ? req.body.content : '';
+  const format = String(req.body?.format || '').toLowerCase();
+  const requestedCvFormat = req.body?.cvFormat;
+  if (!['pdf', 'docx'].includes(format)) return res.status(400).json({ error: { message: 'Choose PDF or DOCX export format.' } });
+  if (!content.trim()) return res.status(400).json({ error: { message: 'Add CV content before exporting.' } });
+  if (content.length > MAX_CV_EXPORT_CHARS) return res.status(413).json({ error: { message: `CV content must be ${MAX_CV_EXPORT_CHARS.toLocaleString()} characters or fewer.` } });
+  if (requestedCvFormat != null && !isCvFormat(requestedCvFormat)) return res.status(400).json({ error: { message: 'Choose a supported CV format.' } });
+  try {
+    const exported = await createCvExport({
+      content,
+      format,
+      cvFormat: normalizeCvFormat(requestedCvFormat),
+      profileName: String(req.body?.profileName || '').slice(0, 160),
+      roleTitle: String(req.body?.roleTitle || '').slice(0, 160),
+    });
+    res.setHeader('Content-Type', exported.contentType);
+    res.setHeader('Content-Length', exported.buffer.length);
+    res.setHeader('Content-Disposition', `attachment; filename="${exported.filename}"; filename*=UTF-8''${encodeURIComponent(exported.filename)}`);
+    res.send(exported.buffer);
+  } catch (error) {
+    res.status(400).json({ error: { message: error.message || 'Could not export the CV.' } });
   }
 });
 

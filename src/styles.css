@@ -302,6 +302,10 @@ textarea::placeholder, input::placeholder { color: #5e6358; }
 .cv-editor { min-height: 440px; margin-top: 13px; padding: 20px; color: #e7e9e2; background: #050604; border: 1px solid var(--line-bright); font: inherit; line-height: 1.65; resize: vertical; }
 .cv-actions { justify-content: flex-start; flex-wrap: wrap; margin-top: 12px; }
 .cv-actions small { color: var(--signal); font-size: 10px; }
+.cv-export-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line); }
+.cv-export-actions > div { display: inline-flex; gap: 7px; }
+.cv-export-actions .button { min-width: 78px; }
+.cv-export-error { flex-basis: 100%; color: #ff8a83; font-size: 9px; line-height: 1.5; }
 .cv-preview-label { margin-top: 24px; padding-top: 17px; border-top: 1px solid var(--line); }
 .cv-preview-label small { color: var(--muted); font-size: 10px; }
 .apply-role-footer { display: flex; align-items: center; justify-content: center; gap: 14px; padding: 20px 24px 24px; border-top: 1px solid var(--line); }
