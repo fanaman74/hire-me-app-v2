@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { customSearchSourceId, DEFAULT_SEARCH_SOURCES, SEARCH_SOURCES } from '../shared/search-sources.js';
 import { canonicalJobUrl, jobsFromSearchResult } from '../shared/jobs.js';
 import { nextWorkflowFor } from '../shared/workflow-navigation.js';
+import { CV_FORMATS, DEFAULT_CV_FORMAT, cvFormatDetails, normalizeCvFormat } from '../shared/cv-format.js';
 import {
   Activity,
   ArrowRight,
@@ -69,11 +70,7 @@ function loadCandidates(scope = '') {
     const scoped = localStorage.getItem(`hma-candidates${suffix}`);
     const legacy = scope ? localStorage.getItem('hma-candidates') : null;
     const parsed = JSON.parse(scoped || legacy || '[]');
-    return Array.isArray(parsed) ? parsed.map((candidate) => {
-      const savedJobs = Array.isArray(candidate.jobs) ? candidate.jobs : [];
-      const recoveredJobs = recoverJobs(savedJobs, candidate.dismissedJobIds);
-      return { ...candidate, workflowOutputs: candidate.workflowOutputs || {}, jobs: recoveredJobs };
-    }) : [];
+    return Array.isArray(parsed) ? prepareCandidates(parsed) : [];
   } catch {
     return [];
   }
@@ -83,7 +80,13 @@ function prepareCandidates(candidates) {
   return candidates.map((candidate) => {
     const savedJobs = Array.isArray(candidate.jobs) ? candidate.jobs : [];
     const recoveredJobs = recoverJobs(savedJobs, candidate.dismissedJobIds);
-    return { ...candidate, workflowOutputs: candidate.workflowOutputs || {}, jobs: recoveredJobs };
+    return {
+      ...candidate,
+      workflowOutputs: candidate.workflowOutputs || {},
+      jobs: recoveredJobs.map((job) => job.tailoredCv && typeof job.tailoredCv === 'object'
+        ? { ...job, tailoredCv: { ...job.tailoredCv, format: normalizeCvFormat(job.tailoredCv.format) } }
+        : job),
+    };
   });
 }
 
@@ -521,6 +524,7 @@ function WorkspaceApp({ user, onLogout, notice = '' }) {
         company: String(roleDetails.company || '').trim(),
         url: String(roleDetails.url || '').trim(),
       },
+      format: normalizeCvFormat(roleDetails.format),
     };
     const save = persistCandidates((current) => current.map((candidate) => {
       if (candidate.id !== candidateId) return candidate;
@@ -1034,6 +1038,7 @@ function WorkflowStudio({ settings, activeCandidate, workflowNavRequest, onSelec
   const [completionNotice, setCompletionNotice] = useState(null);
   const [cvFontSize, setCvFontSize] = useState(16);
   const [outputFontSize, setOutputFontSize] = useState(16);
+  const [cvFormat, setCvFormat] = useState(DEFAULT_CV_FORMAT);
   const [cvSaveState, setCvSaveState] = useState('');
   const [cvActionLoading, setCvActionLoading] = useState(false);
   const [analysisFocus, setAnalysisFocus] = useState(false);
@@ -1045,6 +1050,7 @@ function WorkflowStudio({ settings, activeCandidate, workflowNavRequest, onSelec
   const restoreContextRef = useRef({ candidateId: activeCandidate?.id || '', workflowId: activeCandidate?.lastWorkflowId || '' });
   const completionTimer = useRef(null);
   const runController = useRef(null);
+  const cvFormatRef = useRef(DEFAULT_CV_FORMAT);
   const activeSearchSources = [
     ...SEARCH_SOURCES,
     ...(settings.customSearchSources || []),
@@ -1062,6 +1068,11 @@ function WorkflowStudio({ settings, activeCandidate, workflowNavRequest, onSelec
   useEffect(() => { activeCandidateIdRef.current = activeCandidate?.id || ''; }, [activeCandidate?.id]);
   useEffect(() => { selectedWorkflowIdRef.current = selected.id; }, [selected.id]);
   useEffect(() => { selectedJobIdRef.current = selectedJobId; }, [selectedJobId]);
+  useEffect(() => {
+    const savedFormat = normalizeCvFormat(selectedJob?.tailoredCv?.format);
+    setCvFormat(savedFormat);
+    cvFormatRef.current = savedFormat;
+  }, [activeCandidate?.id, selectedJobId, selectedJob?.tailoredCv?.format]);
   useEffect(() => { onSelectedWorkflowChange?.(selected.id); }, [onSelectedWorkflowChange, selected.id]);
   useEffect(() => {
     if (!analysisFocus || selected.id !== 'add-job' || (!loading && !output)) return undefined;
@@ -1094,6 +1105,9 @@ function WorkflowStudio({ settings, activeCandidate, workflowNavRequest, onSelec
     selectedJobIdRef.current = nextJobId;
     selectedWorkflowIdRef.current = workflow.id;
     const nextJob = savedJobs.find((job) => job.id === nextJobId);
+    const nextFormat = normalizeCvFormat(nextJob?.tailoredCv?.format);
+    setCvFormat(nextFormat);
+    cvFormatRef.current = nextFormat;
     if (nextJob && ['prepare-cv', 'write-cover-letter', 'interview-prep', 'mark-submitted'].includes(workflow.id)) {
       setInput(nextJob.vacancyText || [`${nextJob.title}${nextJob.company ? ` — ${nextJob.company}` : ''}`, nextJob.url, nextJob.summary].filter(Boolean).join('\n\n'));
       if (workflow.id === 'prepare-cv') setOutput(nextJob.tailoredCv?.content || '');
@@ -1265,12 +1279,17 @@ function WorkflowStudio({ settings, activeCandidate, workflowNavRequest, onSelec
     if (activeCandidate) onSelectCandidateJob(activeCandidate.id, jobId);
     const job = savedJobs.find((item) => item.id === jobId);
     if (!job) {
+      setCvFormat(DEFAULT_CV_FORMAT);
+      cvFormatRef.current = DEFAULT_CV_FORMAT;
       setInput('');
       setOutput('');
       setRunState({ status: 'idle' });
       setCvSaveState('');
       return;
     }
+    const selectedFormat = normalizeCvFormat(job.tailoredCv?.format);
+    setCvFormat(selectedFormat);
+    cvFormatRef.current = selectedFormat;
     setSubmissionStage(job.stage && job.stage !== 'new' ? job.stage : 'submitted');
     setInput(selected.id === 'prepare-cv'
       ? (job.vacancyText || job.summary || '')
@@ -1353,6 +1372,7 @@ function WorkflowStudio({ settings, activeCandidate, workflowNavRequest, onSelec
     const runAnalysisFocus = analysisFocusOverride ?? analysisFocus;
     const runWorkflowId = runWorkflow.id;
     const runJobId = runSelectedJobId;
+    const runCvFormat = runWorkflow.id === 'prepare-cv' ? normalizeCvFormat(cvFormatRef.current) : '';
     const isCurrentRunContext = (resolvedJobId = runJobId) => activeCandidateIdRef.current === runCandidateId && selectedWorkflowIdRef.current === runWorkflowId && (!runAnalysisFocus || analysisFocusRef.current) && (selectedJobIdRef.current === runJobId || (resolvedJobId && selectedJobIdRef.current === resolvedJobId));
     setLoading(true);
     setError('');
@@ -1418,6 +1438,7 @@ function WorkflowStudio({ settings, activeCandidate, workflowNavRequest, onSelec
           jobUrl: runSelectedJob?.url || '',
           customSearchSites: runWorkflow.id === 'find-me-a-job' ? activeCandidate?.customSearchSites || [] : [],
           salaryExpectationEur: runWorkflow.id === 'find-me-a-job' ? activeCandidate?.salaryExpectationEur || null : null,
+          ...(runWorkflow.id === 'prepare-cv' ? { cvFormat: runCvFormat } : {}),
         }),
       });
       let completedJobId = runJobId;
@@ -1429,6 +1450,7 @@ function WorkflowStudio({ settings, activeCandidate, workflowNavRequest, onSelec
           url: runSelectedJob?.url || '',
           vacancy: result.vacancyText || runInput,
           analysis: runSelectedJob?.artifacts?.analysis || '',
+          format: runCvFormat,
         });
       } else if (runWorkflow.id === 'add-job' && !runJobId) {
         completedJobId = await onSaveAnalyzedJob(runCandidateId, result.content, runInput);
@@ -1493,6 +1515,7 @@ function WorkflowStudio({ settings, activeCandidate, workflowNavRequest, onSelec
         url: selectedJob?.url || '',
         vacancy: selectedJob?.vacancyText || input,
         analysis: selectedJob?.artifacts?.analysis || '',
+        format: normalizeCvFormat(selectedCv?.format || cvFormatRef.current),
       });
       if (activeCandidateIdRef.current !== actionCandidateId || selectedWorkflowIdRef.current !== 'prepare-cv' || (selectedJobIdRef.current !== actionJobId && selectedJobIdRef.current !== resolvedJobId)) return;
       setSelectedJobId(resolvedJobId);
@@ -1592,6 +1615,15 @@ function WorkflowStudio({ settings, activeCandidate, workflowNavRequest, onSelec
           )}
           {selected.id === 'add-job' && analysisFocus && selectedJob && <div className="focused-analysis-role"><div className="focused-analysis-heading"><div><span className="eyebrow">ANALYZING ROLE</span><h3>{selectedJob.title}</h3>{selectedJob.company && <p>{selectedJob.company}</p>}</div><div className="focused-analysis-actions"><button type="button" className="button secondary compact" onClick={leaveAnalysisFocus} disabled={loading}>Back to jobs</button><button type="button" className="button primary compact" onClick={() => analyzeSavedJob(selectedJob, { force: true })} disabled={loading}><RefreshCw className={loading ? 'spin' : ''} size={14} /> Re-analyze</button></div></div>{selectedJob.url && <a href={selectedJob.url} target="_blank" rel="noreferrer">{selectedJob.url} <ArrowRight size={13} /></a>}<div className="selected-job-summary">{selectedJob.summary || 'No saved summary. The analysis will use the role URL and available profile context.'}</div></div>}
           {selected.id === 'prepare-cv' && <div className="selected-job-details prepare-role-details"><div className="selected-job-details-heading"><span className="eyebrow">ROLE FOR TAILORING</span><span className="selected-job-state">{selectedCv?.status === 'approved' ? 'APPROVED CV SAVED' : selectedCv ? 'DRAFT CV SAVED' : 'READY TO PREPARE'}</span></div>{selectedJob ? <><h3>{selectedJob.title}</h3>{selectedJob.company && <p className="selected-job-company">{selectedJob.company}</p>}{selectedJob.url && <a href={selectedJob.url} target="_blank" rel="noreferrer">{selectedJob.url} <ArrowRight size={13} /></a>}<div className="selected-job-summary">The original CV remains unchanged. Edit the tailored draft below, then explicitly approve it when it is ready.</div></> : <><div className="selected-job-empty">Choose a role in Analyze a job, or paste a vacancy above to prepare a CV manually.</div><button type="button" className="button secondary compact prepare-choose-job" onClick={() => chooseWorkflow(WORKFLOWS.find((workflow) => workflow.id === 'add-job'))}><ArrowRight size={14} /> Choose a job in Analyze a job</button></>}</div>}
+          {selected.id === 'prepare-cv' && <div className="cv-format-picker">
+            <div>
+              <label className="field-label" htmlFor="cv-format"><span>CV FORMAT</span><strong>{selectedCv ? `SAVED: ${cvFormatDetails(selectedCv.format).label.toUpperCase()}` : 'APPLIES ON NEXT GENERATION'}</strong></label>
+              <select id="cv-format" value={cvFormat} onChange={(event) => { const nextFormat = normalizeCvFormat(event.target.value); cvFormatRef.current = nextFormat; setCvFormat(nextFormat); if (selectedCv && nextFormat !== normalizeCvFormat(selectedCv.format)) setCvSaveState('Format changed for the next generation; the saved CV format remains unchanged.'); }} disabled={loading || cvActionLoading}>
+                {Object.values(CV_FORMATS).map((format) => <option key={format.id} value={format.id}>{format.label}</option>)}
+              </select>
+              <small>{cvFormatDetails(cvFormat).description} The consultant will use only evidence in the original CV, vacancy, and saved role analysis.</small>
+            </div>
+          </div>}
           {error && <div className="error-banner"><span>{error}</span>{!settings.apiKeyConfigured && <button onClick={onOpenSettings}>Open settings</button>}</div>}
           <div className="runner-actions">
             <div className="runner-model"><span className="model-pulse" /><span>RUNNING ON</span><strong>{settings.model}</strong></div>

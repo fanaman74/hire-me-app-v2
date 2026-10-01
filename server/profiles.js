@@ -1,7 +1,19 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { normalizeCvFormat } from '../shared/cv-format.js';
 
 const EMPTY_PROFILE_STATE = { candidates: [], activeCandidateId: '' };
+
+function normalizeCandidate(candidate) {
+  return {
+    ...candidate,
+    ...(Array.isArray(candidate.jobs) ? {
+      jobs: candidate.jobs.map((job) => job?.tailoredCv && typeof job.tailoredCv === 'object'
+        ? { ...job, tailoredCv: { ...job.tailoredCv, format: normalizeCvFormat(job.tailoredCv.format) } }
+        : job),
+    } : {}),
+  };
+}
 
 function normalizeProfileState(value) {
   if (!value || !Array.isArray(value.candidates)) {
@@ -27,7 +39,7 @@ function normalizeProfileState(value) {
   }
 
   return {
-    candidates: value.candidates,
+    candidates: value.candidates.map(normalizeCandidate),
     activeCandidateId: typeof value.activeCandidateId === 'string' ? value.activeCandidateId : '',
   };
 }

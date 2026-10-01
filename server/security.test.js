@@ -90,13 +90,31 @@ test('run-command accepts prepare-cv and loads its dedicated prompt', async () =
     const result = await new Promise((resolve, reject) => {
       const request = http.request({ hostname: '127.0.0.1', port: address.port, path: '/api/run-command', method: 'POST', headers: { 'content-type': 'application/json', cookie: register.cookie } }, (response) => { let body = ''; response.on('data', (chunk) => { body += chunk; }); response.on('end', () => resolve({ status: response.statusCode, body: JSON.parse(body) })); });
       request.on('error', reject);
-      request.end(JSON.stringify({ command: 'prepare-cv', input: 'ORIGINAL CV CONTENT\nJordan Example\nPlatform leadership\n\nVACANCY FOR THIS ROLE\nHead of Engineering at Acme\n\nSAVED ROLE ANALYSIS\nStrong match.' }));
+      request.end(JSON.stringify({ command: 'prepare-cv', cvFormat: 'europass', input: 'ORIGINAL CV CONTENT\nJordan Example\nPlatform leadership\n\nVACANCY FOR THIS ROLE\nHead of Engineering at Acme\n\nSAVED ROLE ANALYSIS\nStrong match.' }));
     });
     assert.equal(result.status, 200, JSON.stringify(result.body));
+    assert.equal(result.body.cvFormat, 'europass');
     assert.match(result.body.content, /Tailored CV/);
     assert.match(providerRequest.messages[0].content, /senior recruitment consultant/i);
     assert.match(providerRequest.messages[0].content, /never fabricate/i);
+    assert.match(providerRequest.messages[0].content, /Europass-style structured CV/i);
+    assert.match(providerRequest.messages[0].content, /not an official Europass export/i);
     assert.match(providerRequest.messages[1].content, /ORIGINAL CV CONTENT/);
+    assert.match(providerRequest.messages[1].content, /REQUESTED CV FORMAT.*Europass-style/i);
+    const defaultResult = await new Promise((resolve, reject) => {
+      const request = http.request({ hostname: '127.0.0.1', port: address.port, path: '/api/run-command', method: 'POST', headers: { 'content-type': 'application/json', cookie: register.cookie } }, (response) => { let body = ''; response.on('data', (chunk) => { body += chunk; }); response.on('end', () => resolve({ status: response.statusCode, body: JSON.parse(body) })); });
+      request.on('error', reject);
+      request.end(JSON.stringify({ command: 'prepare-cv', input: 'ORIGINAL CV CONTENT\nVACANCY' }));
+    });
+    assert.equal(defaultResult.status, 200, JSON.stringify(defaultResult.body));
+    assert.equal(defaultResult.body.cvFormat, 'chronological');
+    const invalidResult = await new Promise((resolve, reject) => {
+      const request = http.request({ hostname: '127.0.0.1', port: address.port, path: '/api/run-command', method: 'POST', headers: { 'content-type': 'application/json', cookie: register.cookie } }, (response) => { let body = ''; response.on('data', (chunk) => { body += chunk; }); response.on('end', () => resolve({ status: response.statusCode, body: JSON.parse(body) })); });
+      request.on('error', reject);
+      request.end(JSON.stringify({ command: 'prepare-cv', cvFormat: 'not-a-format', input: 'ORIGINAL CV CONTENT\nVACANCY' }));
+    });
+    assert.equal(invalidResult.status, 400);
+    assert.match(invalidResult.body.error.message, /supported CV format/i);
   } finally {
     await new Promise((resolve) => listener.close(resolve));
     globalThis.fetch = originalFetch;

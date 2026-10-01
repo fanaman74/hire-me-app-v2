@@ -15,6 +15,7 @@ import { createProfileStore } from './profiles.js';
 import { createAuthStore } from './auth.js';
 import { SEARCH_SOURCES, SEARCH_SOURCE_IDS } from '../shared/search-sources.js';
 import { canonicalJobUrl, extractJobLeads } from '../shared/jobs.js';
+import { cvFormatDetails, isCvFormat, normalizeCvFormat } from '../shared/cv-format.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, '..');
@@ -679,11 +680,16 @@ app.post('/api/run-command', async (req, res) => {
   const command = String(req.body.command || '');
   const input = String(req.body.input || '').trim();
   const requestedJobUrl = String(req.body.jobUrl || '').trim();
+  const requestedCvFormat = req.body.cvFormat;
+  const cvFormat = normalizeCvFormat(requestedCvFormat);
   const salaryInput = req.body.salaryExpectationEur;
   const salaryExpectationEur = salaryInput === '' || salaryInput == null ? null : Number(salaryInput);
   const candidateSitesInput = Array.isArray(req.body.customSearchSites) ? req.body.customSearchSites : [];
   const candidateSites = [...new Set(candidateSitesInput.map(normalizeCustomSite))];
   if (!commandNames.has(command)) return res.status(400).json({ error: { message: 'Unknown workflow command.' } });
+  if (command === 'prepare-cv' && requestedCvFormat != null && !isCvFormat(requestedCvFormat)) {
+    return res.status(400).json({ error: { message: 'Choose a supported CV format before preparing the CV.' } });
+  }
   if (!input) return res.status(400).json({ error: { message: 'Add the command inputs before running.' } });
   if (salaryExpectationEur !== null && (!Number.isFinite(salaryExpectationEur) || salaryExpectationEur < 10000 || salaryExpectationEur > 1000000)) {
     return res.status(400).json({ error: { message: 'Salary expectation must be between €10,000 and €1,000,000 per year.' } });
@@ -734,13 +740,14 @@ app.post('/api/run-command', async (req, res) => {
     }
     if (command === 'prepare-cv') {
       const jobUrl = requestedJobUrl || '';
+      const format = cvFormatDetails(cvFormat);
       const posting = jobUrl ? await fetchCustomSite(jobUrl, { signal: requestController.signal }) : null;
       vacancyText = posting?.ok && posting.text ? posting.text.slice(0, 24000) : '';
       const postingEvidence = posting?.ok && posting.text
         ? `LIVE VACANCY\nURL: ${jobUrl}\nFetched successfully immediately before tailoring.\n\n${posting.text.slice(0, 24000)}`
         : `LIVE VACANCY\n${jobUrl ? `The posting could not be fetched (${posting?.text || 'unreachable'}).` : 'No direct posting URL was supplied.'} Use the pasted vacancy below and clearly identify missing evidence.`;
-      userInput = `${postingEvidence}\n\nORIGINAL CV, ROLE ANALYSIS, AND PASTED VACANCY CONTEXT\n${input}`;
-      prompt = `${prompt}\n\nIf live vacancy evidence is unavailable, tailor only from the pasted vacancy and explicitly note missing evidence after the CV.`;
+      userInput = `REQUESTED CV FORMAT — AUTHORITATIVE: ${format.label}\n${format.instruction}\n\n${postingEvidence}\n\nORIGINAL CV, ROLE ANALYSIS, AND PASTED VACANCY CONTEXT\n${input}`;
+      prompt = `${prompt}\n\nREQUESTED CV FORMAT — AUTHORITATIVE: ${format.label}\n${format.instruction}\nThe selected format controls the CV's section order and emphasis. Return the CV itself as editable Markdown. Do not claim an official Europass export. If live vacancy evidence is unavailable, tailor only from the pasted vacancy and explicitly note missing evidence after the CV.`;
     }
     if (command === 'find-me-a-job') {
       customResults = candidateSites.length
@@ -881,7 +888,7 @@ app.post('/api/run-command', async (req, res) => {
       usage: payload.usage ? { ...payload.usage, total_tokens: totalTokens, source_total_tokens: sourceUsageTotal } : (sourceUsageTotal ? { total_tokens: sourceUsageTotal, source_total_tokens: sourceUsageTotal } : null),
       jobs,
       sourceResults,
-      ...(command === 'prepare-cv' ? { vacancyText } : {}),
+      ...(command === 'prepare-cv' ? { vacancyText, cvFormat } : {}),
     });
   } catch (error) {
     const result = apiError(error, 'Agent run failed');
